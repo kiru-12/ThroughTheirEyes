@@ -92,6 +92,27 @@ const Renderer = (() => {
       return s / 9.0;
     }
 
+    // ── Golden-angle disc blur — smooth circle of confusion, no grid artefacts ──
+    // 13 taps: 1 centre + 12 on a golden-angle spiral for uniform disc coverage.
+    vec3 discBlurSRGB(vec2 uv, float blurR) {
+      const float GA = 2.39996323;  // golden angle in radians (~137.5°)
+      vec2 px = 1.0 / u_resolution;
+      vec3 acc = texture2D(u_texture, uv).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 1.0),sin(GA* 1.0))*sqrt( 1.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 2.0),sin(GA* 2.0))*sqrt( 2.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 3.0),sin(GA* 3.0))*sqrt( 3.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 4.0),sin(GA* 4.0))*sqrt( 4.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 5.0),sin(GA* 5.0))*sqrt( 5.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 6.0),sin(GA* 6.0))*sqrt( 6.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 7.0),sin(GA* 7.0))*sqrt( 7.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 8.0),sin(GA* 8.0))*sqrt( 8.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA* 9.0),sin(GA* 9.0))*sqrt( 9.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA*10.0),sin(GA*10.0))*sqrt(10.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA*11.0),sin(GA*11.0))*sqrt(11.0/12.0)*blurR*px).rgb;
+      acc += texture2D(u_texture, uv + vec2(cos(GA*12.0),sin(GA*12.0))*sqrt(12.0/12.0)*blurR*px).rgb;
+      return acc / 13.0;
+    }
+
     // ── Hash / noise helpers ─────────────────────────────────────────────────
     float hash(vec2 p) {
       p = fract(p * vec2(127.1, 311.7));
@@ -298,28 +319,7 @@ const Renderer = (() => {
       // Everything looks equally out-of-focus. No dark zones, no colour change.
       // u_p1: severity 0=mild(−1D) → 1=severe(−10D+)
       } else if (u_mode > 8.5 && u_mode < 9.5) {
-        float sev = u_p1;
-        // Circle-of-confusion disc: 12 taps on two concentric rings + centre
-        float blurR = mix(2.0, 14.0, sev);
-        vec2 px = blurR / u_resolution;
-        vec3 b = texture2D(u_texture, v_texCoord).rgb * 4.0;
-        // Inner ring ×4
-        b += texture2D(u_texture, v_texCoord + vec2( px.x,  0.0  )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px.x,  0.0  )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,   px.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,  -px.y )).rgb;
-        // Outer ring ×8
-        vec2 px2 = px * 1.8;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x,  0.0   )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x,  0.0   )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,    px2.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,   -px2.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x * 0.71,  px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x * 0.71,  px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x * 0.71, -px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x * 0.71, -px2.y * 0.71)).rgb;
-        b /= 16.0;
-        sim = srgbToLinear(b);
+        sim = srgbToLinear(discBlurSRGB(v_texCoord, mix(2.0, 14.0, u_p1)));
 
       // ── 10: Hyperopia (long-sightedness) ──────────────────────────────────────
       // The eye is too short → light would focus behind the retina. Young eyes
@@ -328,25 +328,7 @@ const Renderer = (() => {
       // myopia — blurry at all distances, not just near.
       // u_p1: severity 0=mild(+1D) → 1=severe(+6D+)
       } else if (u_mode > 9.5 && u_mode < 10.5) {
-        float sev = u_p1;
-        float blurR = mix(1.5, 11.0, sev);
-        vec2 px = blurR / u_resolution;
-        vec3 b = texture2D(u_texture, v_texCoord).rgb * 4.0;
-        b += texture2D(u_texture, v_texCoord + vec2( px.x,  0.0  )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px.x,  0.0  )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,   px.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,  -px.y )).rgb;
-        vec2 px2 = px * 1.8;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x,  0.0   )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x,  0.0   )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,    px2.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,   -px2.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x * 0.71,  px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x * 0.71,  px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x * 0.71, -px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x * 0.71, -px2.y * 0.71)).rgb;
-        b /= 16.0;
-        sim = srgbToLinear(b);
+        sim = srgbToLinear(discBlurSRGB(v_texCoord, mix(1.5, 11.0, u_p1)));
 
       // ── 11: Astigmatism ────────────────────────────────────────────────────────
       // The cornea/lens has an oval shape → different focal lengths on different
@@ -379,28 +361,10 @@ const Renderer = (() => {
       // fades toward the periphery (where distant objects would sit).
       // u_p1: addition severity 0=early(+1D) → 1=advanced(+3.5D)
       } else if (u_mode > 11.5) {
-        float sev = u_p1;
-        // Weight blur toward the centre; periphery stays sharp
+        // Centre-weighted blur: near zone (centre) blurry, periphery stays sharp
         float centralW = 1.0 - smoothstep(0.0, 0.40, r);
-        float blurR = mix(2.0, 12.0, sev) * centralW;
-        // Avoid sampling artefacts when blurR≈0
-        vec2 px = max(blurR, 0.3) / u_resolution;
-        vec3 b = texture2D(u_texture, v_texCoord).rgb * 4.0;
-        b += texture2D(u_texture, v_texCoord + vec2( px.x,  0.0  )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px.x,  0.0  )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,   px.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,  -px.y )).rgb;
-        vec2 px2 = px * 1.8;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x,  0.0   )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x,  0.0   )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,    px2.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( 0.0,   -px2.y )).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x * 0.71,  px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x * 0.71,  px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2( px2.x * 0.71, -px2.y * 0.71)).rgb;
-        b += texture2D(u_texture, v_texCoord + vec2(-px2.x * 0.71, -px2.y * 0.71)).rgb;
-        b /= 16.0;
-        sim = srgbToLinear(b);
+        float blurR    = mix(2.0, 12.0, u_p1) * centralW;
+        sim = srgbToLinear(discBlurSRGB(v_texCoord, max(blurR, 0.3)));
       }
 
       // ── Blend with original at the given intensity ───────────────────────────

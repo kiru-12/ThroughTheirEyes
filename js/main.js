@@ -19,7 +19,25 @@
   const errorTitle   = document.getElementById('error-title');
   const errorMsg     = document.getElementById('error-msg');
   const retryBtn     = document.getElementById('btn-retry');
-  const modeBtns     = document.querySelectorAll('.mode-btn');
+  const condCards    = document.querySelectorAll('.cond-card');
+  const condMenu     = document.getElementById('condition-menu');
+  const menuTrigger  = document.getElementById('mode-trigger');
+  const menuClose    = document.getElementById('menu-close');
+  const triggerIcon  = document.getElementById('trigger-icon');
+  const triggerName  = document.getElementById('trigger-name');
+
+  const ICONS = {
+    normal:'\ud83d\udc41\ufe0f', deuteranopia:'\ud83d\udd34', protanopia:'\ud83d\udfe2',
+    tritanopia:'\ud83d\udc99', achromatopsia:'\u2b1b', glaucoma:'\ud83c\udf11',
+    cataracts:'\ud83c\udf2b\ufe0f', macular:'\ud83c\udfaf', retinitis:'\ud83d\udd26',
+    myopia:'\ud83d\udd0d', hyperopia:'\ud83d\udcd6', astigmatism:'\u2733\ufe0f', presbyopia:'\ud83d\udc53'
+  };
+  const COND_NAMES = {
+    normal:'Normal Vision', deuteranopia:'Deuteranopia', protanopia:'Protanopia',
+    tritanopia:'Tritanopia', achromatopsia:'Achromatopsia', glaucoma:'Glaucoma',
+    cataracts:'Cataracts', macular:'Macular Degen.', retinitis:'Retinitis P.',
+    myopia:'Myopia', hyperopia:'Hyperopia', astigmatism:'Astigmatism', presbyopia:'Presbyopia'
+  };
   const slider       = document.getElementById('intensity-slider');
   const intensityVal = document.getElementById('intensity-val');
   const compareBtn   = document.getElementById('btn-compare');
@@ -212,41 +230,58 @@
 
   // ── UI event listeners ────────────────────────────────────────────────────
 
-  // Mode buttons
-  modeBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      modeBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      currentMode = ColorBlind.modeIndex(btn.dataset.mode);
+  // ── Condition menu open / close ──────────────────────────────────────────
 
-      // If the user switches to a simulation mode while intensity is at zero,
-      // auto-restore it to 100 % so they see an immediate effect.
-      if (currentMode !== 0 && intensity === 0) {
-        slider.value = 100;
-        intensity    = 1.0;
-        intensityVal.textContent = '100%';
+  function openMenu()  { condMenu.classList.add('menu-open');    }
+  function closeMenu() { condMenu.classList.remove('menu-open'); }
+
+  menuTrigger.addEventListener('click', openMenu);
+  menuClose.addEventListener('click', closeMenu);
+
+  // ── Activate a mode by name ───────────────────────────────────────────────
+
+  function activateMode(modeName) {
+    currentMode = ColorBlind.modeIndex(modeName);
+
+    // Update trigger button display
+    triggerIcon.textContent = ICONS[modeName] || '\ud83d\udc41\ufe0f';
+    triggerName.textContent = COND_NAMES[modeName] || modeName;
+
+    // Mark the active card
+    condCards.forEach(c => c.classList.toggle('active', c.dataset.mode === modeName));
+
+    // If switching to a simulation while intensity is zero, auto-restore to 100%
+    if (currentMode !== 0 && intensity === 0) {
+      slider.value = 100;
+      intensity    = 1.0;
+      intensityVal.textContent = '100%';
+    }
+
+    // Update the info panel
+    const desc = ColorBlind.description(modeName);
+    if (desc) {
+      infoTitle.textContent = desc.title;
+      infoText.textContent  = desc.text;
+      infoPanel.classList.remove('hidden');
+      if (infoPanelCollapsed) {
+        infoPanelCollapsed = false;
+        infoPanel.classList.remove('collapsed');
       }
+    } else {
+      infoPanel.classList.add('hidden');
+    }
 
-      // Update the info panel
-      const desc = ColorBlind.description(btn.dataset.mode);
-      if (desc) {
-        infoTitle.textContent = desc.title;
-        infoText.textContent  = desc.text;
-        infoPanel.classList.remove('hidden');
-        // Re-open collapsed panel when switching to a new condition
-        if (infoPanelCollapsed) {
-          infoPanelCollapsed = false;
-          infoPanel.classList.remove('collapsed');
-        }
-      } else {
-        // "Normal" — hide the info panel
-        infoPanel.classList.add('hidden');
-      }
+    // Show only this condition's control panel
+    Object.keys(ctrlPanels).forEach(key => {
+      ctrlPanels[key].classList.toggle('hidden', key !== modeName);
+    });
+  }
 
-      // Show/hide condition-specific control panels
-      Object.keys(ctrlPanels).forEach(key => {
-        ctrlPanels[key].classList.toggle('hidden', key !== btn.dataset.mode);
-      });
+  // Condition card clicks — select mode and close menu
+  condCards.forEach(card => {
+    card.addEventListener('click', () => {
+      activateMode(card.dataset.mode);
+      closeMenu();
     });
   });
 
