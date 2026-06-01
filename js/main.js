@@ -27,13 +27,22 @@
   const triggerName  = document.getElementById('trigger-name');
 
   const ICONS = {
-    normal:'\ud83d\udc41\ufe0f', deuteranopia:'\ud83d\udd34', protanopia:'\ud83d\udfe2',
-    tritanopia:'\ud83d\udc99', achromatopsia:'\u2b1b', glaucoma:'\ud83c\udf11',
-    cataracts:'\ud83c\udf2b\ufe0f', macular:'\ud83c\udfaf', retinitis:'\ud83d\udd26',
-    myopia:'\ud83d\udd0d', hyperopia:'\ud83d\udcd6', astigmatism:'\u2733\ufe0f', presbyopia:'\ud83d\udc53'
+    normal:'\ud83d\udc41\ufe0f',  // 👁️  eye
+    deuteranopia:'\ud83d\udfe2',   // 🟢  green — the colour they can't see
+    protanopia:'\ud83d\udd34',     // 🔴  red — the colour they can't see
+    tritanopia:'\ud83d\udfe1',     // 🟡  yellow — blue-yellow confusion
+    achromatopsia:'\ud83e\udda0',  // 🦠  grey/muted — no colour perception
+    glaucoma:'\ud83c\udf11',       // 🌑  dark crescent — peripheral field loss
+    cataracts:'\u2601\ufe0f',      // ☁️  cloud — cloudy/hazy lens
+    macular:'\ud83d\udd35',        // 🔵  central disc — central scotoma
+    retinitis:'\ud83d\udc41\u200d\ud83d\udde8\ufe0f', // 👁️‍🗨️  eye in speech bubble — tunnel vision
+    myopia:'\ud83c\udf01',         // 🌁  foggy cityscape — blurry distance
+    hyperopia:'\ud83d\udcd6',      // 📖  open book — near objects are blurry
+    astigmatism:'\u2728',          // ✨  sparkle — halos and starburst distortion
+    presbyopia:'\ud83d\udc53',     // 👓  reading glasses — age-related near loss
   };
   const COND_NAMES = {
-    normal:'Normal Vision', deuteranopia:'Deuteranopia', protanopia:'Protanopia',
+    normal:'Normal', deuteranopia:'Deuteranopia', protanopia:'Protanopia',
     tritanopia:'Tritanopia', achromatopsia:'Achromatopsia', glaucoma:'Glaucoma',
     cataracts:'Cataracts', macular:'Macular Degen.', retinitis:'Retinitis P.',
     myopia:'Myopia', hyperopia:'Hyperopia', astigmatism:'Astigmatism', presbyopia:'Presbyopia'

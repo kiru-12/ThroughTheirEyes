@@ -55,10 +55,10 @@
           <p class="group-label">Colour Vision</p>
           <div class="cond-grid">
             <button class="cond-card active" data-mode="normal"><span class="card-icon">👁️</span><span class="card-name">Normal</span></button>
-            <button class="cond-card" data-mode="deuteranopia"><span class="card-icon">🔴</span><span class="card-name">Deuteranopia</span></button>
-            <button class="cond-card" data-mode="protanopia"><span class="card-icon">🟢</span><span class="card-name">Protanopia</span></button>
-            <button class="cond-card" data-mode="tritanopia"><span class="card-icon">💙</span><span class="card-name">Tritanopia</span></button>
-            <button class="cond-card" data-mode="achromatopsia"><span class="card-icon">⬛</span><span class="card-name">Achromatopsia</span></button>
+            <button class="cond-card" data-mode="deuteranopia"><span class="card-icon">�</span><span class="card-name">Deuteranopia</span></button>
+            <button class="cond-card" data-mode="protanopia"><span class="card-icon">�</span><span class="card-name">Protanopia</span></button>
+            <button class="cond-card" data-mode="tritanopia"><span class="card-icon">�</span><span class="card-name">Tritanopia</span></button>
+            <button class="cond-card" data-mode="achromatopsia"><span class="card-icon">🦠</span><span class="card-name">Achromatopsia</span></button>
           </div>
         </div>
 
@@ -66,18 +66,18 @@
           <p class="group-label">Eye Diseases</p>
           <div class="cond-grid">
             <button class="cond-card" data-mode="glaucoma"><span class="card-icon">🌑</span><span class="card-name">Glaucoma</span></button>
-            <button class="cond-card" data-mode="cataracts"><span class="card-icon">🌫️</span><span class="card-name">Cataracts</span></button>
-            <button class="cond-card" data-mode="macular"><span class="card-icon">🎯</span><span class="card-name">Macular Degen.</span></button>
-            <button class="cond-card" data-mode="retinitis"><span class="card-icon">🔦</span><span class="card-name">Retinitis P.</span></button>
+            <button class="cond-card" data-mode="cataracts"><span class="card-icon">☁️</span><span class="card-name">Cataracts</span></button>
+            <button class="cond-card" data-mode="macular"><span class="card-icon">🔵</span><span class="card-name">Macular Degen.</span></button>
+            <button class="cond-card" data-mode="retinitis"><span class="card-icon">�‍🗨️</span><span class="card-name">Retinitis P.</span></button>
           </div>
         </div>
 
         <div class="menu-group">
           <p class="group-label">Refractive Errors</p>
           <div class="cond-grid">
-            <button class="cond-card" data-mode="myopia"><span class="card-icon">🔍</span><span class="card-name">Myopia</span></button>
+            <button class="cond-card" data-mode="myopia"><span class="card-icon">🌁</span><span class="card-name">Myopia</span></button>
             <button class="cond-card" data-mode="hyperopia"><span class="card-icon">📖</span><span class="card-name">Hyperopia</span></button>
-            <button class="cond-card" data-mode="astigmatism"><span class="card-icon">✳️</span><span class="card-name">Astigmatism</span></button>
+            <button class="cond-card" data-mode="astigmatism"><span class="card-icon">✨</span><span class="card-name">Astigmatism</span></button>
             <button class="cond-card" data-mode="presbyopia"><span class="card-icon">👓</span><span class="card-name">Presbyopia</span></button>
           </div>
         </div>
@@ -100,17 +100,8 @@
       </div>
     </div>
 
-    <!-- Current condition trigger — tap to open fullscreen picker -->
-    <button id="mode-trigger" aria-label="Change vision condition">
-      <span id="trigger-icon">👁️</span>
-      <div id="trigger-text">
-        <span class="trigger-label">Currently viewing</span>
-        <span id="trigger-name">Normal Vision</span>
-      </div>
-      <span id="trigger-arrow">&#8250;</span>
-    </button>
-
     <!-- Condition-specific controls (shown only for structural conditions) -->
+    <div id="ctrl-wrap">
 
     <!-- Glaucoma controls -->
     <div id="ctrl-glaucoma" class="condition-ctrl hidden">
@@ -218,19 +209,23 @@
       </div>
     </div>
 
-    <!-- Intensity slider + action buttons -->
-    <div id="bottom-row">
+    </div><!-- /#ctrl-wrap -->
+
+    <!-- Single-row compact bar: condition picker · intensity · actions -->
+    <div id="main-bar">
+      <button id="mode-trigger" aria-label="Change vision condition">
+        <span id="trigger-icon">👁️</span>
+        <span id="trigger-name">Normal</span>
+        <span id="trigger-arrow">&#8250;</span>
+      </button>
       <div id="intensity-wrap">
-        <label for="intensity-slider">
-          Intensity
-          <span id="intensity-val">100%</span>
-        </label>
+        <label for="intensity-slider">Intensity <span id="intensity-val">100%</span></label>
         <input id="intensity-slider" type="range" min="0" max="100" value="100"
                aria-label="Simulation intensity" />
       </div>
       <div id="action-btns">
-        <button id="btn-compare" title="Hold to compare with normal vision">&#128065; Compare</button>
-        <button id="btn-split"   title="Toggle split-screen view">&#9646; Split</button>
+        <button id="btn-compare" title="Hold to compare with normal vision">A|B</button>
+        <button id="btn-split"   title="Toggle split-screen view">Split</button>
       </div>
     </div>
 
