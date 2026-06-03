@@ -2,7 +2,7 @@
 
 A mobile-first PWA that uses your device's camera and WebGL to simulate 13 vision conditions in real time. See the world through the eyes of someone with colour blindness, glaucoma, cataracts, myopia, and more — no install required.
 
-**[Live demo →](https://YOUR_USERNAME.github.io/through-their-eyes/)**
+**[Live demo →](https://kiru-12.github.io/ThroughTheirEyes/)**
 
 ---
 
