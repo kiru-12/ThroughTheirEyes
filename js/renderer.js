@@ -1,543 +1,540 @@
 /**
  * renderer.js
  *
- * WebGL renderer: uploads each video frame as a GPU texture and runs a
- * scientifically accurate CVD simulation in GLSL at 60 fps.
+ * Multi-pass WebGL renderer. Each video frame is processed through a small
+ * render graph so we can produce physically-plausible optical blur and
+ * veiling-glare (bloom) that a single-pass shader cannot:
  *
- * Pipeline per pixel:
- *   sRGB decode → linear RGB → LMS → simulate → linear RGB → sRGB encode
+ *   video ─▶ [scene]  (aspect-cover crop, sRGB)
+ *              │
+ *              ├─▶ downsample ─▶ Gaussian blur ─▶ [blur1]  (½ res)
+ *              │                                    │
+ *              │                                    └─▶ downsample ─▶ blur ─▶ [blur2] (¼ res)
+ *              │
+ *              └─▶ bright-pass ─▶ Gaussian blur ─▶ [bloom] (¼ res)
+ *                                                    │
+ *   [scene]+[blur1]+[blur2]+[bloom] ─▶ COMPOSITE ─▶ screen
  *
- * Algorithms:
- *   Protanopia / Deuteranopia : Viénot 1999  (LMS projection)
- *   Tritanopia               : Brettel 1997 (two-plane LMS projection)
- *   Achromatopsia            : BT.709 luminance
- *   LMS matrices             : Smith-Pokorny 1975, sRGB-adapted (DaltonLens)
+ * Colour-vision deficiency uses the Machado 2009 severity model (see
+ * cvd-matrices.js); the intensity slider drives clinical severity 0–100 %.
+ * Structural/optical conditions use the blur pyramid + bloom for realism, and
+ * glaucoma / macular degeneration model the clinically-correct "filling-in"
+ * appearance (blur + desaturation + contrast loss) rather than pure black.
  *
- * Public API:
- *   Renderer.init(canvas)         — initialise WebGL (call once)
- *   Renderer.render(video, state) — call every animation frame
+ * Public API (unchanged):
+ *   Renderer.init(canvas)
+ *   Renderer.render(video, { mode, intensity, isSplit, p1, p2 })
  *
- * state = {
- *   mode:      number   integer 0–4 (see ColorBlind.MODE)
- *   intensity: number   0.0 (no effect) to 1.0 (full simulation)
- *   isSplit:   boolean  if true, left=normal / right=simulated
- * }
+ * Algorithms & sources:
+ *   Protan/Deutan/Tritan : Machado, Oliveira & Fernandes 2009 (linear-RGB matrix)
+ *   Achromatopsia        : rod-weighted (scotopic) luminance + photophobia bloom
+ *   Gaussian blur        : separable 9-tap (GPU Gems weights)
+ *   Blur ↔ linear light  : blurred in sRGB then decoded (matches classic approach)
  */
 
 const Renderer = (() => {
 
-  // ── GLSL source ────────────────────────────────────────────────────────────
-
-  const VERT_SRC = `
+  // ── Shared vertex shader ───────────────────────────────────────────────────
+  const VERT = `
     attribute vec2 a_position;
     varying   vec2 v_texCoord;
     void main() {
-      // Map clip-space [-1,1] → texture-space [0,1].
-      // UNPACK_FLIP_Y_WEBGL is set, so no manual Y-flip needed here.
       v_texCoord  = (a_position + 1.0) * 0.5;
       gl_Position = vec4(a_position, 0.0, 1.0);
     }
   `;
 
-  const FRAG_SRC = `
+  const PREC = `
     #ifdef GL_FRAGMENT_PRECISION_HIGH
       precision highp float;
     #else
       precision mediump float;
     #endif
+  `;
+
+  // ── Pass 1: scene — aspect-correct "cover" crop of the camera frame ────────
+  const SCENE_FRAG = PREC + `
     uniform sampler2D u_texture;
-    uniform float     u_mode;
-    uniform float     u_intensity;
     uniform vec2      u_resolution;
     uniform float     u_videoAspect;
-    uniform float     u_p1;
-    uniform float     u_p2;
     varying vec2      v_texCoord;
 
-    // ── sRGB transfer functions (IEC 61966-2-1) ──────────────────────────────
-    vec3 srgbToLinear(vec3 c) {
-      return mix(c / 12.92,
-                 pow((c + 0.055) / 1.055, vec3(2.4)),
-                 step(vec3(0.04045), c));
-    }
-    vec3 linearToSrgb(vec3 c) {
-      return mix(c * 12.92,
-                 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055,
-                 step(vec3(0.0031308), c));
-    }
-
-    // ── LMS matrices (Smith-Pokorny 1975, sRGB-adapted, DaltonLens) ──────────
-    mat3 lmsFromLinearRGB() {
-      return mat3(
-        0.17882, 0.03456, 0.00030,
-        0.43516, 0.27155, 0.00184,
-        0.04119, 0.03867, 0.01467
-      );
-    }
-    mat3 linearRGBFromLMS() {
-      return mat3(
-         8.09444, -1.02485, -0.03653,
-       -13.05043,  5.40193, -0.41216,
-        11.67206,-11.36147, 69.35132
-      );
-    }
-
-    // ── Box blur on raw sRGB; r = radius in pixels ───────────────────────────
-    vec3 boxBlurSRGB(vec2 uv, float r) {
-      vec2 d = r / u_resolution;
-      vec3 s  = texture2D(u_texture, uv + vec2(-d.x, -d.y)).rgb;
-      s += texture2D(u_texture, uv + vec2( 0.0, -d.y)).rgb;
-      s += texture2D(u_texture, uv + vec2( d.x, -d.y)).rgb;
-      s += texture2D(u_texture, uv + vec2(-d.x,  0.0)).rgb;
-      s += texture2D(u_texture, uv                   ).rgb;
-      s += texture2D(u_texture, uv + vec2( d.x,  0.0)).rgb;
-      s += texture2D(u_texture, uv + vec2(-d.x,  d.y)).rgb;
-      s += texture2D(u_texture, uv + vec2( 0.0,  d.y)).rgb;
-      s += texture2D(u_texture, uv + vec2( d.x,  d.y)).rgb;
-      return s / 9.0;
-    }
-
-    // ── Golden-angle disc blur — smooth circle of confusion, no grid artefacts ──
-    // 13 taps: 1 centre + 12 on a golden-angle spiral for uniform disc coverage.
-    vec3 discBlurSRGB(vec2 uv, float blurR) {
-      const float GA = 2.39996323;  // golden angle in radians (~137.5°)
-      vec2 px = 1.0 / u_resolution;
-      vec3 acc = texture2D(u_texture, uv).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 1.0),sin(GA* 1.0))*sqrt( 1.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 2.0),sin(GA* 2.0))*sqrt( 2.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 3.0),sin(GA* 3.0))*sqrt( 3.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 4.0),sin(GA* 4.0))*sqrt( 4.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 5.0),sin(GA* 5.0))*sqrt( 5.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 6.0),sin(GA* 6.0))*sqrt( 6.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 7.0),sin(GA* 7.0))*sqrt( 7.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 8.0),sin(GA* 8.0))*sqrt( 8.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA* 9.0),sin(GA* 9.0))*sqrt( 9.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA*10.0),sin(GA*10.0))*sqrt(10.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA*11.0),sin(GA*11.0))*sqrt(11.0/12.0)*blurR*px).rgb;
-      acc += texture2D(u_texture, uv + vec2(cos(GA*12.0),sin(GA*12.0))*sqrt(12.0/12.0)*blurR*px).rgb;
-      return acc / 13.0;
-    }
-
-    // ── Hash / noise helpers ─────────────────────────────────────────────────
-    float hash(vec2 p) {
-      p = fract(p * vec2(127.1, 311.7));
-      p += dot(p, p + 19.19);
-      return fract(p.x * p.y);
-    }
-
-    // Smooth value noise on a grid
-    float noise(vec2 p) {
-      vec2 i = floor(p);
-      vec2 f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      float a = hash(i);
-      float b = hash(i + vec2(1.0, 0.0));
-      float c = hash(i + vec2(0.0, 1.0));
-      float d = hash(i + vec2(1.0, 1.0));
-      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-    }
-
-    // ── Scotoma mask: soft dark/blurry blob at a given centre, radius ────────
-    float scotomaMask(vec2 uv, vec2 centre, float r) {
-      vec2 d = (uv - centre) * vec2(u_resolution.x / u_resolution.y, 1.0);
-      return smoothstep(r * 1.4, r * 0.4, length(d));
-    }
-
-    // ── "Cover" mapping: crop the video so it fills the canvas without
-    //    stretching (object-fit: cover), regardless of aspect mismatch. ──────
     vec2 coverUV(vec2 uv) {
       float canvasAspect = u_resolution.x / u_resolution.y;
       vec2 scale = vec2(1.0);
-      if (canvasAspect > u_videoAspect) {
-        scale.y = u_videoAspect / canvasAspect;  // crop top/bottom
-      } else {
-        scale.x = canvasAspect / u_videoAspect;  // crop left/right
-      }
+      if (canvasAspect > u_videoAspect) scale.y = u_videoAspect / canvasAspect;
+      else                              scale.x = canvasAspect / u_videoAspect;
       return (uv - 0.5) * scale + 0.5;
+    }
+    void main() {
+      gl_FragColor = vec4(texture2D(u_texture, coverUV(v_texCoord)).rgb, 1.0);
+    }
+  `;
+
+  // ── Copy (bilinear downsample) ─────────────────────────────────────────────
+  const COPY_FRAG = PREC + `
+    uniform sampler2D u_tex;
+    varying vec2      v_texCoord;
+    void main() { gl_FragColor = texture2D(u_tex, v_texCoord); }
+  `;
+
+  // ── Separable 9-tap Gaussian blur ──────────────────────────────────────────
+  const BLUR_FRAG = PREC + `
+    uniform sampler2D u_tex;
+    uniform vec2      u_texel;   // 1 / source resolution
+    uniform vec2      u_dir;     // (1,0) horizontal | (0,1) vertical
+    uniform float     u_radius;  // spread in source texels
+    varying vec2      v_texCoord;
+    void main() {
+      vec2 o = u_dir * u_texel * u_radius;
+      vec3 c  = texture2D(u_tex, v_texCoord).rgb * 0.227027;
+      c += texture2D(u_tex, v_texCoord + o) .rgb * 0.194595;
+      c += texture2D(u_tex, v_texCoord - o) .rgb * 0.194595;
+      c += texture2D(u_tex, v_texCoord + o*2.0).rgb * 0.121622;
+      c += texture2D(u_tex, v_texCoord - o*2.0).rgb * 0.121622;
+      c += texture2D(u_tex, v_texCoord + o*3.0).rgb * 0.054054;
+      c += texture2D(u_tex, v_texCoord - o*3.0).rgb * 0.054054;
+      c += texture2D(u_tex, v_texCoord + o*4.0).rgb * 0.016216;
+      c += texture2D(u_tex, v_texCoord - o*4.0).rgb * 0.016216;
+      gl_FragColor = vec4(c, 1.0);
+    }
+  `;
+
+  // ── Bright-pass (isolates highlights for veiling glare / bloom) ────────────
+  const BRIGHT_FRAG = PREC + `
+    uniform sampler2D u_tex;
+    uniform float     u_threshold;
+    varying vec2      v_texCoord;
+    void main() {
+      vec3 c = texture2D(u_tex, v_texCoord).rgb;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      gl_FragColor = vec4(c * smoothstep(u_threshold, 1.0, l), 1.0);
+    }
+  `;
+
+  // ── Composite: all condition maths ─────────────────────────────────────────
+  const COMPOSITE_FRAG = PREC + `
+    uniform sampler2D u_scene;
+    uniform sampler2D u_blur1;
+    uniform sampler2D u_blur2;
+    uniform sampler2D u_bloom;
+    uniform vec2      u_resolution;
+    uniform float     u_mode;
+    uniform float     u_intensity;
+    uniform float     u_p1;
+    uniform float     u_p2;
+    uniform mat3      u_cvd;      // Machado 2009 matrix (identity for non-CVD)
+    varying vec2      v_texCoord;
+
+    // sRGB transfer (IEC 61966-2-1)
+    vec3 srgbToLinear(vec3 c) {
+      return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+    }
+    vec3 linearToSrgb(vec3 c) {
+      return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+    }
+
+    float hash(vec2 p) { p = fract(p * vec2(127.1, 311.7)); p += dot(p, p + 19.19); return fract(p.x * p.y); }
+    float noise(vec2 p) {
+      vec2 i = floor(p), f = fract(p);
+      f = f * f * (3.0 - 2.0 * f);
+      float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    }
+    float scotomaMask(vec2 uv, vec2 centre, float rad) {
+      vec2 d = (uv - centre) * vec2(u_resolution.x / u_resolution.y, 1.0);
+      return smoothstep(rad * 1.4, rad * 0.4, length(d));
+    }
+    vec3 desat(vec3 c, float amt) { return mix(c, vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), amt); }
+    vec3 contrast(vec3 c, float amt) { return (c - 0.5) * amt + 0.5; }
+
+    // Blur-pyramid sample in linear RGB. amount: 0=sharp, 1=blur1, 2=blur2.
+    vec3 defocus(vec2 uv, float amount) {
+      vec3 s = srgbToLinear(texture2D(u_scene, uv).rgb);
+      if (amount <= 0.0) return s;
+      vec3 b1 = srgbToLinear(texture2D(u_blur1, uv).rgb);
+      if (amount <= 1.0) return mix(s, b1, amount);
+      vec3 b2 = srgbToLinear(texture2D(u_blur2, uv).rgb);
+      return mix(b1, b2, clamp(amount - 1.0, 0.0, 1.0));
     }
 
     void main() {
-      // Screen coordinate (0..1 across the canvas) drives all effect geometry.
-      // sampleUV is the aspect-corrected coordinate used for texture fetches.
-      vec2 sampleUV = coverUV(v_texCoord);
-      vec4 texel = texture2D(u_texture, sampleUV);
-      vec3 lin = srgbToLinear(texel.rgb);
-      vec3 sim = lin;
-
-      // Aspect-corrected UV (for circular effects)
+      vec2  uv  = v_texCoord;
+      vec3  lin = srgbToLinear(texture2D(u_scene, uv).rgb);
+      vec3  sim = lin;
       float asp = u_resolution.x / u_resolution.y;
-      vec2 ac = (v_texCoord - 0.5) * vec2(asp, 1.0);
-      float r = length(ac);
+      vec2  ac  = (uv - 0.5) * vec2(asp, 1.0);
+      float r   = length(ac);
+      float blend = u_intensity;
 
-      // ── 0: Normal ───────────────────────────────────────────────────────────
-      // (sim = lin already)
+      if (u_mode < 0.5) {
+        // 0 — Normal
+        sim = lin;
 
-      // ── 1: Protanopia (L-cone absent) — Vienot 1999 ────────────────────────
-      if (u_mode > 0.5 && u_mode < 1.5) {
-        vec3 lms = lmsFromLinearRGB() * lin;
-        lms.r = 2.02344 * lms.g - 2.52580 * lms.b;
-        sim = linearRGBFromLMS() * lms;
+      } else if (u_mode < 3.5) {
+        // 1-3 — Colour vision deficiency (Machado 2009, applied in linear RGB).
+        // Severity is already encoded in u_cvd, so no extra blend is needed.
+        sim = u_cvd * lin;
 
-      // ── 2: Deuteranopia (M-cone absent) — Vienot 1999 ──────────────────────
-      } else if (u_mode > 1.5 && u_mode < 2.5) {
-        vec3 lms = lmsFromLinearRGB() * lin;
-        lms.g = 0.49421 * lms.r + 1.24827 * lms.b;
-        sim = linearRGBFromLMS() * lms;
+      } else if (u_mode < 4.5) {
+        // 4 — Achromatopsia (rod monochromacy): scotopic (rod-weighted) luminance,
+        // reduced acuity, and photophobia (highlights bloom and wash out).
+        vec3  w    = vec3(0.15, 0.55, 0.30);        // rods peak ~507nm → green/blue
+        vec3  soft = defocus(uv, 0.6);              // reduced visual acuity
+        float g    = mix(dot(lin, w), dot(soft, w), 0.45);
+        vec3  bloom = srgbToLinear(texture2D(u_bloom, uv).rgb);
+        sim = vec3(g) + bloom * 1.3;
 
-      // ── 3: Tritanopia (S-cone absent) — Brettel 1997 ───────────────────────
-      } else if (u_mode > 2.5 && u_mode < 3.5) {
-        vec3 lms = lmsFromLinearRGB() * lin;
-        vec3 sep = vec3(0.34478, -0.65518, 0.00000);
-        if (dot(lms, sep) >= 0.0) {
-          lms.b = -0.00257 * lms.r + 0.05366 * lms.g;
-        } else {
-          lms.b = -0.06011 * lms.r + 0.16299 * lms.g;
-        }
-        sim = linearRGBFromLMS() * lms;
-
-      // ── 4: Achromatopsia — BT.709 luminance ────────────────────────────────
-      } else if (u_mode > 3.5 && u_mode < 4.5) {
-        float lum = dot(lin, vec3(0.2126, 0.7152, 0.0722));
-        sim = vec3(lum);
-
-      // ── 5: Glaucoma ─────────────────────────────────────────────────────────
-      // Real glaucoma: arcuate scotoma following the nerve fiber layer superior
-      // or inferior to fixation, plus nasal step. Only in end-stage does it
-      // become a narrow central tunnel. Peripheral loss darkens to black.
-      } else if (u_mode > 4.5 && u_mode < 5.5) {
-        // u_p1 (-1..+1): which arcuate — negative=inferior, positive=superior
-        // u_p2 (0..1): disease stage (0=early arcuate, 1=advanced tunnel)
+      } else if (u_mode < 5.5) {
+        // 5 — Glaucoma: arcuate nerve-fibre scotoma + nasal step. The brain
+        // "fills in" the missing field, so loss appears as blur + desaturation +
+        // reduced contrast (NOT black), with a global contrast-sensitivity drop.
         float stage = u_p2;
-
-        // Convert to polar: angle from 12-o'clock, CW
-        float angle = atan(ac.x, ac.y); // -PI..PI
-
-        // Arcuate scotoma: a curved band ~30-150 degrees from fixation along
-        // the horizontal raphe, offset above (u_p1>0) or below (u_p1<0)
-        float arcOffset = u_p1 * 0.45;  // shift band centre up or down
+        float arcOffset = u_p1 * 0.45;
         vec2  arcCentre = vec2(ac.x, ac.y - arcOffset);
         float arcDist   = length(arcCentre);
-
-        // The scotoma is an annulus band (donut slice) between 0.15 and 0.45 
-        // on the affected side, thickening with stage
         float bandInner = 0.12;
         float bandOuter = mix(0.38, 0.50, stage);
         float inBand    = smoothstep(bandInner, bandInner + 0.06, arcDist) *
                           (1.0 - smoothstep(bandOuter, bandOuter + 0.08, arcDist));
-
-        // Restrict scotoma to one hemi-field (sign of u_p1) + spread with stage
         float hemiBlend = smoothstep(-0.08, 0.08, arcCentre.y * sign(u_p1 + 0.01));
         float scotoma   = inBand * hemiBlend;
-
-        // Also add a nasal step (small patch near the horizontal midline nasally)
         float nasalDist = length(vec2(max(0.0, -ac.x * sign(u_p1 + 0.01)) - 0.12, ac.y));
         scotoma = max(scotoma, smoothstep(0.18, 0.06, nasalDist) * 0.8);
-
-        // Advanced stage adds a rim of peripheral loss
         float peripLoss = smoothstep(0.28, 0.42, r) * stage;
-        float darkness  = max(scotoma, peripLoss);
+        float loss = max(scotoma, peripLoss);
 
-        sim = lin * (1.0 - darkness);
+        vec3 lost = contrast(desat(defocus(uv, 1.3), 0.75), 0.55);
+        sim = mix(lin, lost, loss);
+        sim = contrast(sim, mix(1.0, 0.82, stage));   // contrast-sensitivity loss
 
-      // ── 6: Cataracts ────────────────────────────────────────────────────────
-      // Types: 0=nuclear (central yellowing, reduced contrast), 
-      //        1=cortical (spoke-like periphery clouding),
-      //        2=posterior subcapsular (central posterior, severe glare)
-      } else if (u_mode > 5.5 && u_mode < 6.5) {
-        float ctype = u_p1;  // 0=nuclear, 1=cortical, 2=PSC
+      } else if (u_mode < 6.5) {
+        // 6 — Cataracts: 0=nuclear, 1=cortical, 2=posterior subcapsular.
+        // Hallmarks: haze, contrast loss, yellow/brown tint, and forward light
+        // scatter → veiling glare / halos around bright sources (bloom).
+        float ctype = u_p1;
         float glareAmt = u_p2;
-
-        vec3 blurred = srgbToLinear(boxBlurSRGB(sampleUV, 5.0));
-        vec3 hBlurred = srgbToLinear(boxBlurSRGB(sampleUV, 12.0));
+        vec3  bloom = srgbToLinear(texture2D(u_bloom, uv).rgb);
 
         if (ctype < 0.5) {
-          // Nuclear: central yellowing/browning, worst in centre, global haze
-          float centralW = 1.0 - smoothstep(0.0, 0.3, r);
-          vec3 yellow = vec3(0.95, 0.78, 0.35);  // amber tint (linear)
-          vec3 hazed = mix(lin * 0.70 + 0.05, hBlurred * 0.55 + 0.08, 0.45);
-          sim = mix(hazed, mix(hazed, yellow, centralW * 0.55), 1.0);
+          vec3 hazed = desat(contrast(defocus(uv, 0.75), 0.78), 0.25);
+          vec3 amber = vec3(1.0, 0.82, 0.42);
+          float centralW = 1.0 - smoothstep(0.0, 0.5, r);
+          hazed *= mix(vec3(1.0), amber, 0.30 + centralW * 0.22);
+          sim = hazed + bloom * (0.5 + glareAmt * 0.7);
 
         } else if (ctype < 1.5) {
-          // Cortical: spoke/wedge opacities from the periphery inward
-          // Simulate by mixing blur in periodic angular sectors
-          float angularNoise = noise(vec2(atan(ac.y, ac.x) * 3.0, r * 4.0));
-          float spokeWeight = angularNoise * smoothstep(0.10, 0.40, r);
-          sim = mix(lin, hBlurred * 0.65 + 0.05, spokeWeight * 0.85);
+          float ang   = noise(vec2(atan(ac.y, ac.x) * 3.0, r * 4.0));
+          float spoke = ang * smoothstep(0.10, 0.40, r);
+          vec3  hazed = desat(defocus(uv, 1.1), 0.2);
+          sim = mix(lin, hazed, spoke * 0.9) + bloom * (0.3 + glareAmt * 0.6);
 
         } else {
-          // Posterior subcapsular: central haze + intense glare disk on bright areas
-          float centralHaze = smoothstep(0.25, 0.0, r);
-          float lum = dot(lin, vec3(0.2126, 0.7152, 0.0722));
-          float glareDisk = centralHaze * smoothstep(0.5, 0.8, lum) * glareAmt;
-          sim = mix(lin, hBlurred * 0.60 + 0.12, centralHaze * 0.70);
-          sim = mix(sim, vec3(1.0), glareDisk * 0.65);
+          float centralHaze = smoothstep(0.30, 0.0, r);
+          vec3  hazed = contrast(defocus(uv, 1.2), 0.7);
+          sim = mix(lin, hazed, centralHaze * 0.85) + bloom * (0.8 + glareAmt * 1.0);
         }
 
-      // ── 7: Macular Degeneration ─────────────────────────────────────────────
-      // Dry AMD: multiple drusen cause patchy scotomata and metamorphopsia
-      // (straight lines look wavy). Wet AMD: central bleed + leakage.
-      // u_p1: 1=single central scotoma (wet AMD / geographic atrophy)
-      //       2=two off-centre patches (moderate dry)
-      //       3=scattered small patches (early dry)
-      // u_p2: metamorphopsia strength (0=none, 1=strong waviness)
-      } else if (u_mode > 6.5 && u_mode < 7.5) {
-        float nSpots  = u_p1;
+      } else if (u_mode < 7.5) {
+        // 7 — Macular degeneration: metamorphopsia (wavy distortion) + central
+        // scotoma modelled as a blurred / desaturated / low-contrast patch that
+        // the brain fills in (NOT a black dot).
+        float nSpots = u_p1;
         float warpAmt = u_p2;
-
-        // Metamorphopsia: warp UV by a slow-varying noise field
-        float warpScale = 4.0;
-        vec2 warpUV = sampleUV + warpAmt * 0.015 *
-          vec2(noise(v_texCoord * warpScale       ) - 0.5,
-               noise(v_texCoord * warpScale + 7.3 ) - 0.5);
+        float ws = 4.0;
+        vec2 warpUV = uv + warpAmt * 0.015 *
+          vec2(noise(uv * ws) - 0.5, noise(uv * ws + 7.3) - 0.5);
         warpUV = clamp(warpUV, 0.0, 1.0);
-        vec3 warped = srgbToLinear(texture2D(u_texture, warpUV).rgb);
-        sim = warped;
+        sim = srgbToLinear(texture2D(u_scene, warpUV).rgb);
 
-        // Central scotoma(s): dark blurry patches
-        vec3 scotomaSim = srgbToLinear(boxBlurSRGB(sampleUV, 4.0)) * 0.05;
+        vec3 lost = contrast(desat(defocus(warpUV, 1.6), 0.85), 0.5);
+        float mask = scotomaMask(uv, vec2(0.5, 0.5), 0.12);
+        if (nSpots > 1.5) mask = max(mask, scotomaMask(uv, vec2(0.56, 0.44), 0.08));
+        if (nSpots > 2.5) mask = max(mask, scotomaMask(uv, vec2(0.43, 0.56), 0.07));
+        sim = mix(sim, lost, mask);
 
-        float mask = 0.0;
-        // Spot 1: always at fixation centre
-        mask = max(mask, scotomaMask(v_texCoord, vec2(0.5, 0.5), 0.12));
-        if (nSpots > 1.5) {
-          // Spot 2: slightly off-centre (typical of geographic atrophy spread)
-          mask = max(mask, scotomaMask(v_texCoord, vec2(0.56, 0.44), 0.08));
-        }
-        if (nSpots > 2.5) {
-          // Spot 3: second satellite atrophy zone
-          mask = max(mask, scotomaMask(v_texCoord, vec2(0.43, 0.56), 0.07));
-        }
-
-        sim = mix(sim, scotomaSim, mask);
-
-      // ── 8: Retinitis Pigmentosa ─────────────────────────────────────────────
-      // RP destroys the peripheral rods first → classic ring scotoma that
-      // marches inward. Night blindness (no rod function) → periphery goes
-      // completely black even in dim conditions. Central island survives longest.
-      // u_p1: stage 0=early (mid-periphery ring), 1=mid, 2=late (small island)
-      } else if (u_mode > 7.5 && u_mode < 8.5) {
-        float stage = u_p1 / 2.0;  // normalize 0..1
-
-        // Central safe zone radius: shrinks with stage
-        float centralR   = mix(0.28, 0.06, stage);
-        // Ring scotoma: annulus of darkness
-        float ringInner  = centralR;
-        float ringOuter  = mix(0.60, 1.50, stage);
-
-        // Inside the ring = safe (central island)
+      } else if (u_mode < 8.5) {
+        // 8 — Retinitis pigmentosa: peripheral rods die → genuine field loss
+        // (kept dark, but soft-edged) plus night blindness (low contrast).
+        float stage = u_p1 / 2.0;
+        float centralR  = mix(0.28, 0.06, stage);
+        float ringOuter = mix(0.60, 1.50, stage);
         float inCentre   = 1.0 - smoothstep(centralR - 0.03, centralR + 0.03, r);
-        // Outside the ring = some very limited peripheral vision (early only)
-        float inPeriphery = smoothstep(ringOuter - 0.05, ringOuter + 0.10, r)
-                            * (1.0 - stage);  // disappears in late stage
-        float visible    = max(inCentre, inPeriphery);
+        float inPeriph   = smoothstep(ringOuter - 0.05, ringOuter + 0.10, r) * (1.0 - stage);
+        float visible    = max(inCentre, inPeriph);
+        vec3  dim = contrast(desat(lin, 0.3), 0.7) * 0.05;   // near-black residual
+        sim = mix(dim, lin, visible);
 
-        // The lost zone goes fully black (rod photoreceptors are gone, not grey)
-        sim = lin * visible;
+      } else if (u_mode < 9.5) {
+        // 9 — Myopia: uniform circle-of-confusion defocus (whole field).
+        sim = defocus(uv, u_p1 * 2.0);
 
-      // ── 9: Myopia (short-sightedness) ────────────────────────────────────────
-      // The eye is too long → light focuses in front of the retina. Optical
-      // result: a uniform disc (circle of confusion) blur across the whole image.
-      // Everything looks equally out-of-focus. No dark zones, no colour change.
-      // u_p1: severity 0=mild(−1D) → 1=severe(−10D+)
-      } else if (u_mode > 8.5 && u_mode < 9.5) {
-        sim = srgbToLinear(discBlurSRGB(sampleUV, mix(2.0, 14.0, u_p1)));
+      } else if (u_mode < 10.5) {
+        // 10 — Hyperopia: uniform defocus (approximated; a monocular camera has
+        // no depth, so distance-selective focus cannot be reproduced).
+        sim = defocus(uv, u_p1 * 1.7);
 
-      // ── 10: Hyperopia (long-sightedness) ──────────────────────────────────────
-      // The eye is too short → light would focus behind the retina. Young eyes
-      // compensate by over-flexing the lens (accommodation), causing eye strain.
-      // When uncorrected or fatigued, the result is the same uniform defocus as
-      // myopia — blurry at all distances, not just near.
-      // u_p1: severity 0=mild(+1D) → 1=severe(+6D+)
-      } else if (u_mode > 9.5 && u_mode < 10.5) {
-        sim = srgbToLinear(discBlurSRGB(sampleUV, mix(1.5, 11.0, u_p1)));
-
-      // ── 11: Astigmatism ────────────────────────────────────────────────────────
-      // The cornea/lens has an oval shape → different focal lengths on different
-      // meridians. The visual result is directional smearing: edges and lines
-      // perpendicular to the blur axis look doubled or streaked, while parallel
-      // ones stay comparatively sharp. No dark zones, no colour change.
-      // u_p1: axis angle in radians (0=horizontal smear, π/2=vertical smear)
-      // u_p2: severity 0=mild(0.5D) → 1=severe(4D+)
-      } else if (u_mode > 10.5 && u_mode < 11.5) {
+      } else if (u_mode < 11.5) {
+        // 11 — Astigmatism: directional (single-meridian) smear + light streaks.
         float angle = u_p1;
         float sev   = u_p2;
-        float blurR = mix(2.0, 13.0, sev);
-        // Smear direction is perpendicular to the astigmatism axis
-        vec2 dir  = normalize(vec2(cos(angle + 1.5708), sin(angle + 1.5708)) / u_resolution);
-        // 7-tap weighted line kernel (mimics elongated circle of confusion)
-        float s1 = blurR * 0.5, s2 = blurR * 1.0, s3 = blurR * 1.6;
-        vec3 b  = texture2D(u_texture, sampleUV            ).rgb * 0.28;
-        b      += texture2D(u_texture, sampleUV + dir * s1 ).rgb * 0.20;
-        b      += texture2D(u_texture, sampleUV - dir * s1 ).rgb * 0.20;
-        b      += texture2D(u_texture, sampleUV + dir * s2 ).rgb * 0.14;
-        b      += texture2D(u_texture, sampleUV - dir * s2 ).rgb * 0.14;
-        b      += texture2D(u_texture, sampleUV + dir * s3 ).rgb * 0.02;
-        b      += texture2D(u_texture, sampleUV - dir * s3 ).rgb * 0.02;
-        sim = srgbToLinear(b);
+        float blurR = mix(2.0, 16.0, sev);
+        vec2  dir = normalize(vec2(cos(angle + 1.5708), sin(angle + 1.5708)));
+        vec2  tx  = 1.0 / u_resolution;
+        vec3  b  = srgbToLinear(texture2D(u_scene, uv).rgb) * 0.20;
+        b += srgbToLinear(texture2D(u_scene, uv + dir * tx * blurR * 0.5).rgb) * 0.15;
+        b += srgbToLinear(texture2D(u_scene, uv - dir * tx * blurR * 0.5).rgb) * 0.15;
+        b += srgbToLinear(texture2D(u_scene, uv + dir * tx * blurR * 1.0).rgb) * 0.12;
+        b += srgbToLinear(texture2D(u_scene, uv - dir * tx * blurR * 1.0).rgb) * 0.12;
+        b += srgbToLinear(texture2D(u_scene, uv + dir * tx * blurR * 1.6).rgb) * 0.08;
+        b += srgbToLinear(texture2D(u_scene, uv - dir * tx * blurR * 1.6).rgb) * 0.08;
+        b += srgbToLinear(texture2D(u_scene, uv + dir * tx * blurR * 2.3).rgb) * 0.05;
+        b += srgbToLinear(texture2D(u_scene, uv - dir * tx * blurR * 2.3).rgb) * 0.05;
+        vec3 bloom = srgbToLinear(texture2D(u_bloom, uv).rgb);
+        sim = b + bloom * sev * 0.5;
 
-      // ── 12: Presbyopia (age-related near-vision loss) ──────────────────────────
-      // The lens stiffens with age and can no longer flex to focus up close.
-      // Distance vision stays sharp; near/centre objects go blurry. Simulated
-      // as a blur that is strongest at the image centre (reading/near zone) and
-      // fades toward the periphery (where distant objects would sit).
-      // u_p1: addition severity 0=early(+1D) → 1=advanced(+3.5D)
-      } else if (u_mode > 11.5) {
-        // Centre-weighted blur: near zone (centre) blurry, periphery stays sharp
-        float centralW = 1.0 - smoothstep(0.0, 0.40, r);
-        float blurR    = mix(2.0, 12.0, u_p1) * centralW;
-        sim = srgbToLinear(discBlurSRGB(sampleUV, max(blurR, 0.3)));
+      } else {
+        // 12 — Presbyopia: near vision blur, approximated as centre-weighted
+        // defocus (periphery = distance, stays sharp).
+        float centralW = 1.0 - smoothstep(0.0, 0.45, r);
+        sim = defocus(uv, u_p1 * 2.0 * centralW);
       }
 
-      // ── Blend with original at the given intensity ───────────────────────────
-      vec3 blended = mix(lin, sim, u_intensity);
-      gl_FragColor = vec4(linearToSrgb(clamp(blended, 0.0, 1.0)), texel.a);
+      vec3 blended = mix(lin, sim, blend);
+      gl_FragColor = vec4(linearToSrgb(clamp(blended, 0.0, 1.0)), 1.0);
     }
   `;
 
-  // ── Private state ──────────────────────────────────────────────────────────
+  // ── CVD mode → Machado type ────────────────────────────────────────────────
+  const CVD_TYPE = { 1: 'protanopia', 2: 'deuteranopia', 3: 'tritanopia' };
+  const IDENTITY = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 
-  let gl, program, texture, posLoc, modeLoc, intensityLoc, resLoc, p1Loc, p2Loc, videoAspectLoc;
+  // ── Private state ──────────────────────────────────────────────────────────
+  let gl, quadBuffer, videoTex;
+  let pScene, pCopy, pBlur, pBright, pComposite;
+  let scene, halfA, halfB, quarterA, quarterB, bloom;
+  let fbW = 0, fbH = 0;
+  let texAllocated = false, texW = 0, texH = 0;
   let initialized = false;
-  let texAllocated = false;   // false until the first full texImage2D upload
-  let texW = 0, texH = 0;     // dimensions of the currently-allocated texture
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-
   function compileShader(type, src) {
-    const shader = gl.createShader(type);
-    gl.shaderSource(shader, src);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      const log = gl.getShaderInfoLog(shader);
-      gl.deleteShader(shader);
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(s);
+      gl.deleteShader(s);
       throw new Error('Shader compile error: ' + log);
     }
-    return shader;
+    return s;
+  }
+
+  function makeProgram(vsrc, fsrc, uniformNames) {
+    const vs = compileShader(gl.VERTEX_SHADER, vsrc);
+    const fs = compileShader(gl.FRAGMENT_SHADER, fsrc);
+    const program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error('Program link error: ' + gl.getProgramInfoLog(program));
+    }
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    const loc = { a_position: gl.getAttribLocation(program, 'a_position') };
+    uniformNames.forEach(n => { loc[n] = gl.getUniformLocation(program, n); });
+    return { program, loc };
+  }
+
+  function createFBO(w, h) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    const fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return { fb, tex, w, h };
+  }
+
+  function resizeTargets(w, h) {
+    if (fbW === w && fbH === h) return;
+    fbW = w; fbH = h;
+    [scene, halfA, halfB, quarterA, quarterB, bloom].forEach(t => {
+      if (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); }
+    });
+    const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    const qw = Math.max(1, w >> 2), qh = Math.max(1, h >> 2);
+    scene    = createFBO(w, h);
+    halfA    = createFBO(hw, hh);
+    halfB    = createFBO(hw, hh);
+    quarterA = createFBO(qw, qh);
+    quarterB = createFBO(qw, qh);
+    bloom    = createFBO(qw, qh);
+  }
+
+  function bindQuad(program) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.enableVertexAttribArray(program.loc.a_position);
+    gl.vertexAttribPointer(program.loc.a_position, 2, gl.FLOAT, false, 0, 0);
+  }
+
+  function setTex(program, name, tex, unit) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(program.loc[name], unit);
+  }
+
+  function drawTo(target, program, setUniforms) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.fb);
+    gl.viewport(0, 0, target.w, target.h);
+    gl.useProgram(program.program);
+    bindQuad(program);
+    setUniforms();
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  // Separable Gaussian: horizontal ping→pong, vertical pong→ping (result in ping)
+  function blurInto(ping, pong, radius) {
+    drawTo(pong, pBlur, () => {
+      setTex(pBlur, 'u_tex', ping.tex, 0);
+      gl.uniform2f(pBlur.loc.u_texel, 1 / ping.w, 1 / ping.h);
+      gl.uniform2f(pBlur.loc.u_dir, 1, 0);
+      gl.uniform1f(pBlur.loc.u_radius, radius);
+    });
+    drawTo(ping, pBlur, () => {
+      setTex(pBlur, 'u_tex', pong.tex, 0);
+      gl.uniform2f(pBlur.loc.u_texel, 1 / pong.w, 1 / pong.h);
+      gl.uniform2f(pBlur.loc.u_dir, 0, 1);
+      gl.uniform1f(pBlur.loc.u_radius, radius);
+    });
+  }
+
+  function compositeDraw(w, h, mode, intensity, p1, p2) {
+    let cvd = IDENTITY;
+    let blend = intensity;
+    if (mode >= 1 && mode <= 3) {
+      // Intensity slider drives Machado severity; the matrix carries the effect.
+      cvd = CVDMatrices.toColumnMajor(CVDMatrices.matrix(CVD_TYPE[mode], intensity));
+      blend = 1.0;
+    }
+    gl.useProgram(pComposite.program);
+    bindQuad(pComposite);
+    setTex(pComposite, 'u_scene', scene.tex, 0);
+    setTex(pComposite, 'u_blur1', halfA.tex, 1);
+    setTex(pComposite, 'u_blur2', quarterA.tex, 2);
+    setTex(pComposite, 'u_bloom', bloom.tex, 3);
+    gl.uniform2f(pComposite.loc.u_resolution, w, h);
+    gl.uniform1f(pComposite.loc.u_mode, mode);
+    gl.uniform1f(pComposite.loc.u_intensity, blend);
+    gl.uniform1f(pComposite.loc.u_p1, p1);
+    gl.uniform1f(pComposite.loc.u_p2, p2);
+    gl.uniformMatrix3fv(pComposite.loc.u_cvd, false, cvd);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
   // ── Public: init ───────────────────────────────────────────────────────────
-
   function init(canvas) {
     if (initialized) return;
-
     gl = canvas.getContext('webgl2')
       || canvas.getContext('webgl')
       || canvas.getContext('experimental-webgl');
     if (!gl) throw new Error('no-context');
 
-    // Flip video frames so Y=0 is at the top (matching DOM/video convention)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-    // Compile & link shader program
-    const vert = compileShader(gl.VERTEX_SHADER,   VERT_SRC);
-    const frag = compileShader(gl.FRAGMENT_SHADER, FRAG_SRC);
-
-    program = gl.createProgram();
-    gl.attachShader(program, vert);
-    gl.attachShader(program, frag);
-    gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      throw new Error('Program link error: ' + gl.getProgramInfoLog(program));
-    }
-
-    // Shaders are now baked into the program; intermediate objects can be freed
-    gl.deleteShader(vert);
-    gl.deleteShader(frag);
-
-    gl.useProgram(program);
-
-    posLoc       = gl.getAttribLocation(program,  'a_position');
-    modeLoc      = gl.getUniformLocation(program, 'u_mode');
-    intensityLoc = gl.getUniformLocation(program, 'u_intensity');
-    resLoc       = gl.getUniformLocation(program, 'u_resolution');
-    p1Loc        = gl.getUniformLocation(program, 'u_p1');
-    p2Loc        = gl.getUniformLocation(program, 'u_p2');
-    videoAspectLoc = gl.getUniformLocation(program, 'u_videoAspect');
-
-    // Fullscreen quad — two counter-clockwise triangles covering NDC space
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-      -1, -1,   1, -1,  -1,  1,
-      -1,  1,   1, -1,   1,  1
+      -1, -1,  1, -1,  -1, 1,
+      -1,  1,  1, -1,   1, 1
     ]), gl.STATIC_DRAW);
 
-    gl.enableVertexAttribArray(posLoc);
-    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-
-    // Create re-usable video texture
-    texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+    videoTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, videoTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 
+    pScene     = makeProgram(VERT, SCENE_FRAG,     ['u_texture', 'u_resolution', 'u_videoAspect']);
+    pCopy      = makeProgram(VERT, COPY_FRAG,      ['u_tex']);
+    pBlur      = makeProgram(VERT, BLUR_FRAG,      ['u_tex', 'u_texel', 'u_dir', 'u_radius']);
+    pBright    = makeProgram(VERT, BRIGHT_FRAG,    ['u_tex', 'u_threshold']);
+    pComposite = makeProgram(VERT, COMPOSITE_FRAG, [
+      'u_scene', 'u_blur1', 'u_blur2', 'u_bloom', 'u_resolution',
+      'u_mode', 'u_intensity', 'u_p1', 'u_p2', 'u_cvd'
+    ]);
+
     initialized = true;
   }
 
-  // ── Private: draw fullscreen quad with a given mode + intensity ───────────
-
-  function drawQuad(mode, intensity, p1, p2) {
-    gl.uniform1f(modeLoc, mode);
-    gl.uniform1f(intensityLoc, intensity);
-    gl.uniform1f(p1Loc, p1 != null ? p1 : 0.0);
-    gl.uniform1f(p2Loc, p2 != null ? p2 : 0.0);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-  }
-
   // ── Public: render ─────────────────────────────────────────────────────────
-
-  /**
-   * @param {HTMLVideoElement} video
-   * @param {{ mode: number, intensity: number, isSplit: boolean, p1?: number, p2?: number }} state
-   */
   function render(video, state) {
     const w = gl.canvas.width;
     const h = gl.canvas.height;
+    resizeTargets(w, h);
 
-    gl.viewport(0, 0, w, h);
-    gl.uniform2f(resLoc, w, h);
-
-    // Video's own pixel dimensions (for aspect-correct "cover" cropping)
-    const vw = video.videoWidth  || 16;
+    // Upload current video frame (allocate once, then sub-image)
+    const vw = video.videoWidth || 16;
     const vh = video.videoHeight || 9;
-    gl.uniform1f(videoAspectLoc, vw / vh);
-
-    // Upload the current video frame to the GPU texture (one upload per frame).
-    // Allocate with texImage2D only on the first frame / when the source size
-    // changes; thereafter use the cheaper texSubImage2D.
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.bindTexture(gl.TEXTURE_2D, videoTex);
     if (!texAllocated || vw !== texW || vh !== texH) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-      texAllocated = true;
-      texW = vw;
-      texH = vh;
+      texAllocated = true; texW = vw; texH = vh;
     } else {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, video);
     }
 
+    // Pass 1 — scene (aspect-cover)
+    drawTo(scene, pScene, () => {
+      setTex(pScene, 'u_texture', videoTex, 0);
+      gl.uniform2f(pScene.loc.u_resolution, w, h);
+      gl.uniform1f(pScene.loc.u_videoAspect, vw / vh);
+    });
+
+    // The blur pyramid + bloom are only sampled by certain conditions; skip the
+    // extra passes entirely for modes that don't need them (normal, CVD, RP).
+    const m = state.mode;
+    const needsExtra = (m === 4) || (m >= 5 && m <= 7) || (m >= 9 && m <= 12);
+
+    if (needsExtra) {
+      // Pass 2 — blur pyramid level 1 (½ res)
+      drawTo(halfA, pCopy, () => setTex(pCopy, 'u_tex', scene.tex, 0));
+      blurInto(halfA, halfB, 2.0);
+
+      // Pass 3 — blur pyramid level 2 (¼ res)
+      drawTo(quarterA, pCopy, () => setTex(pCopy, 'u_tex', halfA.tex, 0));
+      blurInto(quarterA, quarterB, 2.0);
+
+      // Pass 4 — bloom (bright-pass of the sharp scene, then blur), ¼ res
+      drawTo(bloom, pBright, () => {
+        setTex(pBright, 'u_tex', scene.tex, 0);
+        gl.uniform1f(pBright.loc.u_threshold, 0.75);
+      });
+      blurInto(bloom, quarterB, 3.0);
+    }
+
+    // Pass 5 — composite to screen
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
     const p1 = state.p1 != null ? state.p1 : 0.0;
     const p2 = state.p2 != null ? state.p2 : 0.0;
 
     if (state.isSplit) {
-      const half = Math.floor(w / 2);
-
+      const halfx = Math.floor(w / 2);
       gl.enable(gl.SCISSOR_TEST);
-
-      // Left half — normal vision (mode 0, intensity 1)
-      gl.scissor(0, 0, half, h);
-      drawQuad(0, 1.0, 0, 0);
-
-      // Right half — simulated vision
-      gl.scissor(half, 0, w - half, h);
-      drawQuad(state.mode, state.intensity, p1, p2);
-
+      gl.scissor(0, 0, halfx, h);
+      compositeDraw(w, h, 0, 1.0, 0, 0);                          // left = normal
+      gl.scissor(halfx, 0, w - halfx, h);
+      compositeDraw(w, h, state.mode, state.intensity, p1, p2);   // right = simulated
       gl.disable(gl.SCISSOR_TEST);
-
     } else {
-      drawQuad(state.mode, state.intensity, p1, p2);
+      compositeDraw(w, h, state.mode, state.intensity, p1, p2);
     }
   }
 

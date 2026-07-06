@@ -7,7 +7,7 @@
  *   - Bump CACHE_VERSION whenever any cached file changes to force an update.
  */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `tte-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -16,6 +16,7 @@ const APP_SHELL = [
   './style.css',
   './manifest.json',
   './js/colorblind.js',
+  './js/cvd-matrices.js',
   './js/renderer.js',
   './js/main.js',
   './icons/icon-192.png',
