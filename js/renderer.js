@@ -40,11 +40,16 @@ const Renderer = (() => {
   `;
 
   const FRAG_SRC = `
-    precision mediump float;
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+      precision highp float;
+    #else
+      precision mediump float;
+    #endif
     uniform sampler2D u_texture;
     uniform float     u_mode;
     uniform float     u_intensity;
     uniform vec2      u_resolution;
+    uniform float     u_videoAspect;
     uniform float     u_p1;
     uniform float     u_p2;
     varying vec2      v_texCoord;
@@ -138,8 +143,24 @@ const Renderer = (() => {
       return smoothstep(r * 1.4, r * 0.4, length(d));
     }
 
+    // ── "Cover" mapping: crop the video so it fills the canvas without
+    //    stretching (object-fit: cover), regardless of aspect mismatch. ──────
+    vec2 coverUV(vec2 uv) {
+      float canvasAspect = u_resolution.x / u_resolution.y;
+      vec2 scale = vec2(1.0);
+      if (canvasAspect > u_videoAspect) {
+        scale.y = u_videoAspect / canvasAspect;  // crop top/bottom
+      } else {
+        scale.x = canvasAspect / u_videoAspect;  // crop left/right
+      }
+      return (uv - 0.5) * scale + 0.5;
+    }
+
     void main() {
-      vec4 texel = texture2D(u_texture, v_texCoord);
+      // Screen coordinate (0..1 across the canvas) drives all effect geometry.
+      // sampleUV is the aspect-corrected coordinate used for texture fetches.
+      vec2 sampleUV = coverUV(v_texCoord);
+      vec4 texel = texture2D(u_texture, sampleUV);
       vec3 lin = srgbToLinear(texel.rgb);
       vec3 sim = lin;
 
@@ -226,8 +247,8 @@ const Renderer = (() => {
         float ctype = u_p1;  // 0=nuclear, 1=cortical, 2=PSC
         float glareAmt = u_p2;
 
-        vec3 blurred = srgbToLinear(boxBlurSRGB(v_texCoord, 5.0));
-        vec3 hBlurred = srgbToLinear(boxBlurSRGB(v_texCoord, 12.0));
+        vec3 blurred = srgbToLinear(boxBlurSRGB(sampleUV, 5.0));
+        vec3 hBlurred = srgbToLinear(boxBlurSRGB(sampleUV, 12.0));
 
         if (ctype < 0.5) {
           // Nuclear: central yellowing/browning, worst in centre, global haze
@@ -265,7 +286,7 @@ const Renderer = (() => {
 
         // Metamorphopsia: warp UV by a slow-varying noise field
         float warpScale = 4.0;
-        vec2 warpUV = v_texCoord + warpAmt * 0.015 *
+        vec2 warpUV = sampleUV + warpAmt * 0.015 *
           vec2(noise(v_texCoord * warpScale       ) - 0.5,
                noise(v_texCoord * warpScale + 7.3 ) - 0.5);
         warpUV = clamp(warpUV, 0.0, 1.0);
@@ -273,7 +294,7 @@ const Renderer = (() => {
         sim = warped;
 
         // Central scotoma(s): dark blurry patches
-        vec3 scotomaSim = srgbToLinear(boxBlurSRGB(v_texCoord, 4.0)) * 0.05;
+        vec3 scotomaSim = srgbToLinear(boxBlurSRGB(sampleUV, 4.0)) * 0.05;
 
         float mask = 0.0;
         // Spot 1: always at fixation centre
@@ -319,7 +340,7 @@ const Renderer = (() => {
       // Everything looks equally out-of-focus. No dark zones, no colour change.
       // u_p1: severity 0=mild(−1D) → 1=severe(−10D+)
       } else if (u_mode > 8.5 && u_mode < 9.5) {
-        sim = srgbToLinear(discBlurSRGB(v_texCoord, mix(2.0, 14.0, u_p1)));
+        sim = srgbToLinear(discBlurSRGB(sampleUV, mix(2.0, 14.0, u_p1)));
 
       // ── 10: Hyperopia (long-sightedness) ──────────────────────────────────────
       // The eye is too short → light would focus behind the retina. Young eyes
@@ -328,7 +349,7 @@ const Renderer = (() => {
       // myopia — blurry at all distances, not just near.
       // u_p1: severity 0=mild(+1D) → 1=severe(+6D+)
       } else if (u_mode > 9.5 && u_mode < 10.5) {
-        sim = srgbToLinear(discBlurSRGB(v_texCoord, mix(1.5, 11.0, u_p1)));
+        sim = srgbToLinear(discBlurSRGB(sampleUV, mix(1.5, 11.0, u_p1)));
 
       // ── 11: Astigmatism ────────────────────────────────────────────────────────
       // The cornea/lens has an oval shape → different focal lengths on different
@@ -345,13 +366,13 @@ const Renderer = (() => {
         vec2 dir  = normalize(vec2(cos(angle + 1.5708), sin(angle + 1.5708)) / u_resolution);
         // 7-tap weighted line kernel (mimics elongated circle of confusion)
         float s1 = blurR * 0.5, s2 = blurR * 1.0, s3 = blurR * 1.6;
-        vec3 b  = texture2D(u_texture, v_texCoord            ).rgb * 0.28;
-        b      += texture2D(u_texture, v_texCoord + dir * s1 ).rgb * 0.20;
-        b      += texture2D(u_texture, v_texCoord - dir * s1 ).rgb * 0.20;
-        b      += texture2D(u_texture, v_texCoord + dir * s2 ).rgb * 0.14;
-        b      += texture2D(u_texture, v_texCoord - dir * s2 ).rgb * 0.14;
-        b      += texture2D(u_texture, v_texCoord + dir * s3 ).rgb * 0.02;
-        b      += texture2D(u_texture, v_texCoord - dir * s3 ).rgb * 0.02;
+        vec3 b  = texture2D(u_texture, sampleUV            ).rgb * 0.28;
+        b      += texture2D(u_texture, sampleUV + dir * s1 ).rgb * 0.20;
+        b      += texture2D(u_texture, sampleUV - dir * s1 ).rgb * 0.20;
+        b      += texture2D(u_texture, sampleUV + dir * s2 ).rgb * 0.14;
+        b      += texture2D(u_texture, sampleUV - dir * s2 ).rgb * 0.14;
+        b      += texture2D(u_texture, sampleUV + dir * s3 ).rgb * 0.02;
+        b      += texture2D(u_texture, sampleUV - dir * s3 ).rgb * 0.02;
         sim = srgbToLinear(b);
 
       // ── 12: Presbyopia (age-related near-vision loss) ──────────────────────────
@@ -364,7 +385,7 @@ const Renderer = (() => {
         // Centre-weighted blur: near zone (centre) blurry, periphery stays sharp
         float centralW = 1.0 - smoothstep(0.0, 0.40, r);
         float blurR    = mix(2.0, 12.0, u_p1) * centralW;
-        sim = srgbToLinear(discBlurSRGB(v_texCoord, max(blurR, 0.3)));
+        sim = srgbToLinear(discBlurSRGB(sampleUV, max(blurR, 0.3)));
       }
 
       // ── Blend with original at the given intensity ───────────────────────────
@@ -375,8 +396,10 @@ const Renderer = (() => {
 
   // ── Private state ──────────────────────────────────────────────────────────
 
-  let gl, program, texture, posLoc, modeLoc, intensityLoc, resLoc, p1Loc, p2Loc;
+  let gl, program, texture, posLoc, modeLoc, intensityLoc, resLoc, p1Loc, p2Loc, videoAspectLoc;
   let initialized = false;
+  let texAllocated = false;   // false until the first full texImage2D upload
+  let texW = 0, texH = 0;     // dimensions of the currently-allocated texture
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -430,6 +453,7 @@ const Renderer = (() => {
     resLoc       = gl.getUniformLocation(program, 'u_resolution');
     p1Loc        = gl.getUniformLocation(program, 'u_p1');
     p2Loc        = gl.getUniformLocation(program, 'u_p2');
+    videoAspectLoc = gl.getUniformLocation(program, 'u_videoAspect');
 
     // Fullscreen quad — two counter-clockwise triangles covering NDC space
     const buf = gl.createBuffer();
@@ -476,9 +500,23 @@ const Renderer = (() => {
     gl.viewport(0, 0, w, h);
     gl.uniform2f(resLoc, w, h);
 
-    // Upload the current video frame to the GPU texture (one upload per frame)
+    // Video's own pixel dimensions (for aspect-correct "cover" cropping)
+    const vw = video.videoWidth  || 16;
+    const vh = video.videoHeight || 9;
+    gl.uniform1f(videoAspectLoc, vw / vh);
+
+    // Upload the current video frame to the GPU texture (one upload per frame).
+    // Allocate with texImage2D only on the first frame / when the source size
+    // changes; thereafter use the cheaper texSubImage2D.
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    if (!texAllocated || vw !== texW || vh !== texH) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+      texAllocated = true;
+      texW = vw;
+      texH = vh;
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    }
 
     const p1 = state.p1 != null ? state.p1 : 0.0;
     const p2 = state.p2 != null ? state.p2 : 0.0;

@@ -1,22 +1,31 @@
 {
-  "name": "ColorSight — Color Blind Vision Simulator",
-  "short_name": "ColorSight",
-  "description": "Simulate color blindness in real-time using your phone's camera.",
+  "name": "ThroughTheirEyes — Vision Condition Simulator",
+  "short_name": "ThroughTheirEyes",
+  "description": "See the world through the eyes of someone with colour blindness, glaucoma, cataracts and more — in real time using your camera.",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#0d0d0d",
   "theme_color": "#0d0d0d",
-  "orientation": "any",
+  "orientation": "portrait",
   "icons": [
     {
       "src": "icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

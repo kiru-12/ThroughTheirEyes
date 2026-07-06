@@ -88,6 +88,7 @@
   // ── App state ─────────────────────────────────────────────────────────────
 
   let currentMode = 0;   // integer index — see ColorBlind.MODE
+  let currentModeName = 'normal';  // cached name for the active mode
   let intensity   = 1.0;
   let isSplit     = false;
   let isComparing = false;   // true while compare button is held down
@@ -111,7 +112,9 @@
   // ── Canvas sizing ─────────────────────────────────────────────────────────
 
   function resizeCanvas() {
-    const dpr = window.devicePixelRatio || 1;
+    // Cap DPR at 2: high-DPI phones (3x) trebles the fragment work through the
+    // blur kernels for no visible benefit on a camera feed.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w   = Math.round(window.innerWidth  * dpr);
     const h   = Math.round(window.innerHeight * dpr);
     if (canvas.width !== w || canvas.height !== h) {
@@ -136,7 +139,8 @@
     if (video.readyState < 2) return;
 
     resizeCanvas();
-    const modeName = Object.keys(ColorBlind.MODE).find(k => ColorBlind.MODE[k] === getCurrentMode()) || 'normal';
+    // Compare-hold shows normal vision; otherwise use the active mode's params.
+    const modeName = isComparing ? 'normal' : currentModeName;
     const cp = condParams[modeName] || { p1: 0, p2: 0 };
     Renderer.render(video, {
       mode: getCurrentMode(),
@@ -251,6 +255,7 @@
 
   function activateMode(modeName) {
     currentMode = ColorBlind.modeIndex(modeName);
+    currentModeName = modeName;
 
     // Update trigger button display
     triggerIcon.textContent = ICONS[modeName] || '\ud83d\udc41\ufe0f';
@@ -378,6 +383,16 @@
     presbyopiaVal.textContent = presbyopiaLabel(+presbyopiaSlider.value);
   });
 
+  // Sync every slider label to its initial value so the displayed dioptres
+  // match the default slider positions on first paint.
+  myopiaVal.textContent     = myopiaLabel(+myopiaSlider.value);
+  hyperopiaVal.textContent  = hyperopiaLabel(+hyperopiaSlider.value);
+  presbyopiaVal.textContent = presbyopiaLabel(+presbyopiaSlider.value);
+  astigAxisVal.textContent  = astigAxisSlider.value + '\u00b0';
+  astigSevVal.textContent   = astigSevLabel(+astigSevSlider.value);
+  glareVal.textContent      = glareSlider.value + '%';
+  warpVal.textContent       = warpSlider.value + '%';
+
   // Split-screen toggle
   splitBtn.addEventListener('click', () => {
     isSplit = !isSplit;
@@ -390,6 +405,16 @@
 
   // Keep canvas pixel dimensions in sync with the window
   window.addEventListener('resize', resizeCanvas);
+
+  // Register the service worker for offline / installable PWA support.
+  // Relative path keeps it working under a GitHub Pages project subpath.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {
+        /* offline support is a progressive enhancement — ignore failures */
+      });
+    });
+  }
 
   // ── Boot ──────────────────────────────────────────────────────────────────
 
