@@ -148,9 +148,24 @@ const Renderer = (() => {
       float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
       return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
     }
+    // Fractal Brownian motion — a few octaves of value noise, normalised to
+    // ~[0,1]. Used to give the retinal-damage masks organic, irregular edges.
+    float fbm(vec2 p) {
+      float v = 0.0, a = 0.5, s = 0.0;
+      for (int i = 0; i < 3; i++) { v += a * noise(p); s += a; p *= 2.02; a *= 0.5; }
+      return v / s;
+    }
+    // Filled-in scotoma with an organic (non-circular) boundary. The distance
+    // field is domain-warped by fbm so the lesion is lobulated like geographic
+    // atrophy, and the interior is mottled to suggest patchy RPE sparing.
     float scotomaMask(vec2 uv, vec2 centre, float rad) {
       vec2 d = (uv - centre) * vec2(u_resolution.x / u_resolution.y, 1.0);
-      return smoothstep(rad * 1.4, rad * 0.4, length(d));
+      vec2 w = vec2(fbm(uv * 6.0 + centre * 19.0),
+                    fbm(uv * 6.0 + centre * 19.0 + 51.3)) - 0.5;
+      float dist = length(d + w * rad * 0.9);
+      float m = smoothstep(rad * 1.35, rad * 0.45, dist);
+      float mottle = 0.8 + 0.2 * fbm(uv * 13.0 + centre * 8.0);
+      return m * mottle;
     }
     vec3 desat(vec3 c, float amt) { return mix(c, vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), amt); }
     vec3 contrast(vec3 c, float amt) { return (c - 0.5) * amt + 0.5; }
@@ -296,14 +311,22 @@ const Renderer = (() => {
         sim = mix(sim, lost, mask);
 
       } else if (u_mode < 8.5) {
-        // 8 — Retinitis pigmentosa: peripheral rods die → genuine field loss
-        // (kept dark, but soft-edged) plus night blindness (low contrast).
+        // 8 — Retinitis pigmentosa: rods die from the mid-periphery inward.
+        // Real field loss is a ragged ring that closes into a tunnel, with
+        // scattered surviving islands (bone-spicule scotomas) — not a clean
+        // circle. Kept dark but soft-edged, plus night blindness (low contrast).
         float stage = u_p1 / 2.0;
-        float centralR  = mix(0.28, 0.06, stage);
-        float ringOuter = mix(0.60, 1.50, stage);
-        float inCentre   = 1.0 - smoothstep(centralR - 0.03, centralR + 0.03, r);
-        float inPeriph   = smoothstep(ringOuter - 0.05, ringOuter + 0.10, r) * (1.0 - stage);
-        float visible    = max(inCentre, inPeriph);
+        float ang   = atan(ac.y, ac.x);
+        // Ragged tunnel edge: perturb the radius by direction so it isn't round.
+        float rr = r + (fbm(vec2(cos(ang), sin(ang)) * 3.0 + r * 3.0) - 0.5) * 0.09;
+        float centralR = mix(0.34, 0.06, stage);
+        float inCentre = 1.0 - smoothstep(centralR - 0.04, centralR + 0.04, rr);
+        // Far-peripheral vision survives early, broken into patches by noise,
+        // and disappears as the disease advances.
+        float farEdge  = mix(0.62, 1.50, stage);
+        float patch    = smoothstep(0.46, 0.60, fbm(ac * 5.0));
+        float inPeriph = step(farEdge, rr) * patch * (1.0 - stage);
+        float visible  = clamp(max(inCentre, inPeriph), 0.0, 1.0);
         vec3  dim = contrast(desat(lin, 0.3), 0.7) * 0.05;   // near-black residual
         sim = mix(dim, lin, visible);
 
