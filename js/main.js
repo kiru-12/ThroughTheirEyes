@@ -2,10 +2,11 @@
  * main.js
  *
  * App entry point:
+ *  - Generates the condition menu and control panels from ColorBlind.CONDITIONS
  *  - Requests camera access via getUserMedia
  *  - Drives the requestAnimationFrame render loop
- *  - Wires up all UI controls (mode buttons, intensity slider,
- *    hold-to-compare button, split-screen toggle)
+ *  - Wires up all UI controls (condition picker, intensity slider,
+ *    hold-to-compare button, split-screen toggle, keyboard shortcuts)
  */
 
 (async () => {
@@ -19,41 +20,12 @@
   const errorTitle   = document.getElementById('error-title');
   const errorMsg     = document.getElementById('error-msg');
   const retryBtn     = document.getElementById('btn-retry');
-  const condCards    = document.querySelectorAll('.cond-card');
   const condMenu     = document.getElementById('condition-menu');
+  const menuScroll   = document.getElementById('menu-scroll');
   const menuTrigger  = document.getElementById('mode-trigger');
   const menuClose    = document.getElementById('menu-close');
   const triggerIcon  = document.getElementById('trigger-icon');
   const triggerName  = document.getElementById('trigger-name');
-
-  const ICONS = {
-    normal:'\ud83d\udc41\ufe0f',  // 👁️  eye
-    deuteranopia:'\ud83d\udfe2',   // 🟢  green — the colour they can't see
-    protanopia:'\ud83d\udd34',     // 🔴  red — the colour they can't see
-    tritanopia:'\ud83d\udfe1',     // 🟡  yellow — blue-yellow confusion
-    achromatopsia:'\ud83e\udda0',  // 🦠  grey/muted — no colour perception
-    glaucoma:'\ud83c\udf11',       // 🌑  dark crescent — peripheral field loss
-    cataracts:'\u2601\ufe0f',      // ☁️  cloud — cloudy/hazy lens
-    macular:'\ud83d\udd35',        // 🔵  central disc — central scotoma
-    retinitis:'\ud83d\udc41\u200d\ud83d\udde8\ufe0f', // 👁️‍🗨️  eye in speech bubble — tunnel vision
-    myopia:'\ud83c\udf01',         // 🌁  foggy cityscape — blurry distance
-    hyperopia:'\ud83d\udcd6',      // 📖  open book — near objects are blurry
-    astigmatism:'\u2728',          // ✨  sparkle — halos and starburst distortion
-    presbyopia:'\ud83d\udc53',     // 👓  reading glasses — age-related near loss
-  };
-  const COND_NAMES = {
-    normal:'Normal', deuteranopia:'Deuteranopia', protanopia:'Protanopia',
-    tritanopia:'Tritanopia', achromatopsia:'Achromatopsia', glaucoma:'Glaucoma',
-    cataracts:'Cataracts', macular:'Macular Degen.', retinitis:'Retinitis P.',
-    myopia:'Myopia', hyperopia:'Hyperopia', astigmatism:'Astigmatism', presbyopia:'Presbyopia'
-  };
-  // Menu cards take their icon from the ICONS map so the cards and the
-  // trigger button always agree (single source of truth).
-  condCards.forEach(c => {
-    const ic = c.querySelector('.card-icon');
-    if (ic && ICONS[c.dataset.mode]) ic.textContent = ICONS[c.dataset.mode];
-  });
-
   const slider       = document.getElementById('intensity-slider');
   const intensityVal = document.getElementById('intensity-val');
   const compareBtn   = document.getElementById('btn-compare');
@@ -63,34 +35,7 @@
   const infoToggle   = document.getElementById('info-toggle');
   const infoTitle    = document.getElementById('info-title');
   const infoText     = document.getElementById('info-text');
-
-  // Condition-specific control panels
-  const ctrlPanels = {
-    glaucoma:    document.getElementById('ctrl-glaucoma'),
-    cataracts:   document.getElementById('ctrl-cataracts'),
-    macular:     document.getElementById('ctrl-macular'),
-    retinitis:   document.getElementById('ctrl-retinitis'),
-    myopia:      document.getElementById('ctrl-myopia'),
-    hyperopia:   document.getElementById('ctrl-hyperopia'),
-    astigmatism: document.getElementById('ctrl-astigmatism'),
-    presbyopia:  document.getElementById('ctrl-presbyopia'),
-  };
-
-  // Sliders
-  const glareSlider      = document.getElementById('glare-slider');
-  const glareVal         = document.getElementById('glare-val');
-  const warpSlider       = document.getElementById('warp-slider');
-  const warpVal          = document.getElementById('warp-val');
-  const myopiaSlider     = document.getElementById('myopia-slider');
-  const myopiaVal        = document.getElementById('myopia-val');
-  const hyperopiaSlider  = document.getElementById('hyperopia-slider');
-  const hyperopiaVal     = document.getElementById('hyperopia-val');
-  const astigAxisSlider  = document.getElementById('astig-axis-slider');
-  const astigAxisVal     = document.getElementById('astig-axis-val');
-  const astigSevSlider   = document.getElementById('astig-sev-slider');
-  const astigSevVal      = document.getElementById('astig-sev-val');
-  const presbyopiaSlider = document.getElementById('presbyopia-slider');
-  const presbyopiaVal    = document.getElementById('presbyopia-val');
+  const ctrlWrap     = document.getElementById('ctrl-wrap');
 
   // ── App state ─────────────────────────────────────────────────────────────
 
@@ -101,20 +46,115 @@
   let isComparing = false;   // true while compare button is held down
   let infoPanelCollapsed = false;  // user can collapse the info panel
 
-  // Condition-specific parameters (sent to shader as u_p1, u_p2)
-  const condParams = {
-    glaucoma:    { p1: 0,    p2: 0    },  // p1=hemi(0=sup,1=inf), p2=stage(0-1)
-    cataracts:   { p1: 0,    p2: 0.5  },  // p1=type(0/1/2), p2=glare
-    macular:     { p1: 2,    p2: 0.5  },  // p1=spots(1-3), p2=warp
-    retinitis:   { p1: 0,    p2: 0    },  // p1=stage(0/1/2)
-    myopia:      { p1: 0.33, p2: 0    },  // p1=severity
-    hyperopia:   { p1: 0.33, p2: 0    },  // p1=severity
-    astigmatism: { p1: 0,    p2: 0.5  },  // p1=axis(rad), p2=severity
-    presbyopia:  { p1: 0.4,  p2: 0    },  // p1=severity
-  };
+  // Condition-specific parameters (sent to shader as u_p1, u_p2);
+  // populated with defaults while building the control panels below.
+  const condParams = {};
 
   let animId      = null;    // requestAnimationFrame handle; null = loop not started
   let mediaStream = null;    // active MediaStream so we can stop tracks on retry
+
+  // ── UI generation from the condition registry ────────────────────────────
+
+  // Menu: one .menu-group per registry group, one .cond-card per condition.
+  const groupEls = {};
+  ColorBlind.CONDITIONS.forEach(cond => {
+    let grid = groupEls[cond.group];
+    if (!grid) {
+      const wrap  = document.createElement('div');
+      wrap.className = 'menu-group';
+      const label = document.createElement('p');
+      label.className = 'group-label';
+      label.textContent = cond.group;
+      grid = document.createElement('div');
+      grid.className = 'cond-grid';
+      wrap.append(label, grid);
+      menuScroll.appendChild(wrap);
+      groupEls[cond.group] = grid;
+    }
+    const card = document.createElement('button');
+    card.className = 'cond-card' + (cond.name === 'normal' ? ' active' : '');
+    card.dataset.mode = cond.name;
+    const icon = document.createElement('span');
+    icon.className = 'card-icon';
+    icon.textContent = cond.icon;
+    const name = document.createElement('span');
+    name.className = 'card-name';
+    name.textContent = cond.label;
+    card.append(icon, name);
+    card.addEventListener('click', () => {
+      activateMode(cond.name);
+      closeMenu();
+    });
+    grid.appendChild(card);
+  });
+  const condCards = document.querySelectorAll('.cond-card');
+
+  // Control panels: one .condition-ctrl per condition that declares controls.
+  const ctrlPanels = {};
+  ColorBlind.CONDITIONS.forEach(cond => {
+    condParams[cond.name] = { p1: 0, p2: 0 };
+    if (!cond.controls.length) return;
+
+    const panel = document.createElement('div');
+    panel.className = 'condition-ctrl hidden';
+
+    cond.controls.forEach(ctrl => {
+      const row   = document.createElement('div');
+      row.className = 'ctrl-row';
+      const label = document.createElement('label');
+      row.appendChild(label);
+
+      if (ctrl.type === 'toggle') {
+        label.textContent = ctrl.label;
+        const group = document.createElement('div');
+        group.className = 'ctrl-toggle-group';
+        ctrl.options.forEach(opt => {
+          const btn = document.createElement('button');
+          btn.className = 'ctrl-btn';
+          btn.textContent = opt.label;
+          const isDefault = opt.value === ctrl.default;
+          btn.classList.toggle('active', isDefault);
+          btn.setAttribute('aria-pressed', String(isDefault));
+          if (isDefault) condParams[cond.name][ctrl.param] = opt.value;
+          btn.addEventListener('click', () => {
+            group.querySelectorAll('.ctrl-btn').forEach(b => {
+              b.classList.remove('active');
+              b.setAttribute('aria-pressed', 'false');
+            });
+            btn.classList.add('active');
+            btn.setAttribute('aria-pressed', 'true');
+            condParams[cond.name][ctrl.param] = opt.value;
+          });
+          group.appendChild(btn);
+        });
+        row.appendChild(group);
+
+      } else { // slider
+        const valSpan = document.createElement('span');
+        label.textContent = ctrl.label + ' ';
+        label.appendChild(valSpan);
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.min = ctrl.min;
+        input.max = ctrl.max;
+        input.value = ctrl.default;
+        input.setAttribute('aria-label', ctrl.label);
+        const apply = () => {
+          const v = +input.value;
+          condParams[cond.name][ctrl.param] = ctrl.toParam ? ctrl.toParam(v) : v / 100;
+          valSpan.textContent = ctrl.format ? ctrl.format(v) : v + '%';
+        };
+        input.addEventListener('input', apply);
+        apply();   // sync param + label to the default position
+        row.appendChild(input);
+      }
+
+      panel.appendChild(row);
+    });
+
+    ctrlWrap.appendChild(panel);
+    ctrlPanels[cond.name] = panel;
+  });
 
   // ── Canvas sizing ─────────────────────────────────────────────────────────
 
@@ -261,8 +301,6 @@
     }
   }
 
-  // ── UI event listeners ────────────────────────────────────────────────────
-
   // ── Condition menu open / close ──────────────────────────────────────────
 
   // Native <dialog>: showModal() gives focus trapping and Escape-to-close.
@@ -276,15 +314,16 @@
   // ── Activate a mode by name ───────────────────────────────────────────────
 
   function activateMode(modeName) {
-    currentMode = ColorBlind.modeIndex(modeName);
-    currentModeName = modeName;
+    const cond = ColorBlind.get(modeName) || ColorBlind.get('normal');
+    currentMode = cond.index;
+    currentModeName = cond.name;
 
     // Update trigger button display
-    triggerIcon.textContent = ICONS[modeName] || '\ud83d\udc41\ufe0f';
-    triggerName.textContent = COND_NAMES[modeName] || modeName;
+    triggerIcon.textContent = cond.icon;
+    triggerName.textContent = cond.label;
 
     // Mark the active card
-    condCards.forEach(c => c.classList.toggle('active', c.dataset.mode === modeName));
+    condCards.forEach(c => c.classList.toggle('active', c.dataset.mode === cond.name));
 
     // If switching to a simulation while intensity is zero, auto-restore to 100%
     if (currentMode !== 0 && intensity === 0) {
@@ -294,10 +333,9 @@
     }
 
     // Update the info panel
-    const desc = ColorBlind.description(modeName);
-    if (desc) {
-      infoTitle.textContent = desc.title;
-      infoText.textContent  = desc.text;
+    if (cond.description) {
+      infoTitle.textContent = cond.description.title;
+      infoText.textContent  = cond.description.text;
       infoPanel.classList.remove('hidden');
       if (infoPanelCollapsed) {
         infoPanelCollapsed = false;
@@ -309,17 +347,9 @@
 
     // Show only this condition's control panel
     Object.keys(ctrlPanels).forEach(key => {
-      ctrlPanels[key].classList.toggle('hidden', key !== modeName);
+      ctrlPanels[key].classList.toggle('hidden', key !== cond.name);
     });
   }
-
-  // Condition card clicks — select mode and close menu
-  condCards.forEach(card => {
-    card.addEventListener('click', () => {
-      activateMode(card.dataset.mode);
-      closeMenu();
-    });
-  });
 
   // Info panel collapse/expand toggle
   infoToggle.addEventListener('click', () => {
@@ -334,97 +364,18 @@
   });
 
   // Hold-to-compare: while held shows normal vision for instant A/B comparison
-  compareBtn.addEventListener('pointerdown', () => {
-    isComparing = true;
-    compareBtn.classList.add('active');
-  });
-  compareBtn.addEventListener('pointerup', () => {
-    isComparing = false;
-    compareBtn.classList.remove('active');
-  });
-  compareBtn.addEventListener('pointerleave', () => {
-    isComparing = false;
-    compareBtn.classList.remove('active');
-  });
+  function setComparing(on) {
+    isComparing = on;
+    compareBtn.classList.toggle('active', on);
+  }
+  compareBtn.addEventListener('pointerdown',   () => setComparing(true));
+  compareBtn.addEventListener('pointerup',     () => setComparing(false));
+  compareBtn.addEventListener('pointerleave',  () => setComparing(false));
   // pointercancel fires when the browser takes over the gesture (e.g. scroll);
   // without it the compare state would stick on.
-  compareBtn.addEventListener('pointercancel', () => {
-    isComparing = false;
-    compareBtn.classList.remove('active');
-  });
+  compareBtn.addEventListener('pointercancel', () => setComparing(false));
   // Prevent context-menu on long-press (mobile)
   compareBtn.addEventListener('contextmenu', e => e.preventDefault());
-
-  // Condition-specific toggle buttons (ctrl-btn)
-  document.querySelectorAll('.ctrl-btn').forEach(btn => {
-    btn.setAttribute('aria-pressed', String(btn.classList.contains('active')));
-    btn.addEventListener('click', () => {
-      const ctrl = btn.dataset.ctrl;
-      const val  = parseFloat(btn.dataset.val);
-      // Deactivate siblings with same data-ctrl
-      btn.closest('.ctrl-toggle-group').querySelectorAll('.ctrl-btn').forEach(b => {
-        b.classList.remove('active');
-        b.setAttribute('aria-pressed', 'false');
-      });
-      btn.classList.add('active');
-      btn.setAttribute('aria-pressed', 'true');
-      // Map ctrl name to condParams entry
-      if (ctrl === 'hemi')    condParams.glaucoma.p1  = val;
-      if (ctrl === 'stage')   condParams.glaucoma.p2  = val;
-      if (ctrl === 'ctype')   condParams.cataracts.p1 = val;
-      if (ctrl === 'spots')   condParams.macular.p1   = val;
-      if (ctrl === 'rpstage') condParams.retinitis.p1 = val;
-    });
-  });
-
-  // Glare slider
-  glareSlider.addEventListener('input', () => {
-    condParams.cataracts.p2 = glareSlider.value / 100;
-    glareVal.textContent = glareSlider.value + '%';
-  });
-
-  // Warp slider
-  warpSlider.addEventListener('input', () => {
-    condParams.macular.p2 = warpSlider.value / 100;
-    warpVal.textContent = warpSlider.value + '%';
-  });
-
-  // Helper: map 0-100 slider to dioptre label for refractive conditions
-  function myopiaLabel(v)  { return '\u2212' + (1 + v * 0.09).toFixed(1) + 'D'; }
-  function hyperopiaLabel(v){ return '+' + (1 + v * 0.04).toFixed(1) + 'D'; }
-  function presbyopiaLabel(v){ return '+' + (1 + v * 0.025).toFixed(1) + 'D'; }
-  function astigSevLabel(v) { return (0.5 + v * 0.035).toFixed(1) + 'D'; }
-
-  myopiaSlider.addEventListener('input', () => {
-    condParams.myopia.p1 = myopiaSlider.value / 100;
-    myopiaVal.textContent = myopiaLabel(+myopiaSlider.value);
-  });
-  hyperopiaSlider.addEventListener('input', () => {
-    condParams.hyperopia.p1 = hyperopiaSlider.value / 100;
-    hyperopiaVal.textContent = hyperopiaLabel(+hyperopiaSlider.value);
-  });
-  astigAxisSlider.addEventListener('input', () => {
-    condParams.astigmatism.p1 = (+astigAxisSlider.value) * Math.PI / 180;
-    astigAxisVal.textContent = astigAxisSlider.value + '\u00b0';
-  });
-  astigSevSlider.addEventListener('input', () => {
-    condParams.astigmatism.p2 = astigSevSlider.value / 100;
-    astigSevVal.textContent = astigSevLabel(+astigSevSlider.value);
-  });
-  presbyopiaSlider.addEventListener('input', () => {
-    condParams.presbyopia.p1 = presbyopiaSlider.value / 100;
-    presbyopiaVal.textContent = presbyopiaLabel(+presbyopiaSlider.value);
-  });
-
-  // Sync every slider label to its initial value so the displayed dioptres
-  // match the default slider positions on first paint.
-  myopiaVal.textContent     = myopiaLabel(+myopiaSlider.value);
-  hyperopiaVal.textContent  = hyperopiaLabel(+hyperopiaSlider.value);
-  presbyopiaVal.textContent = presbyopiaLabel(+presbyopiaSlider.value);
-  astigAxisVal.textContent  = astigAxisSlider.value + '\u00b0';
-  astigSevVal.textContent   = astigSevLabel(+astigSevSlider.value);
-  glareVal.textContent      = glareSlider.value + '%';
-  warpVal.textContent       = warpSlider.value + '%';
 
   // Split-screen toggle
   splitBtn.addEventListener('click', () => {
@@ -438,8 +389,7 @@
   // 0 = normal, 1-9 = conditions in menu order, Space (hold) = compare,
   // S = split, M = menu. Skipped while the dialog is open or a control that
   // uses these keys itself has focus.
-  const KEY_MODES = ['deuteranopia', 'protanopia', 'tritanopia', 'achromatopsia',
-                     'glaucoma', 'cataracts', 'macular', 'retinitis', 'myopia'];
+  const KEY_MODES = ColorBlind.CONDITIONS.filter(c => c.name !== 'normal').map(c => c.name);
 
   document.addEventListener('keydown', (e) => {
     if (condMenu.open) return;
@@ -449,10 +399,7 @@
     if (e.key === ' ') {
       if (t && t.tagName === 'BUTTON') return;   // let focused buttons activate
       e.preventDefault();                         // no page scroll
-      if (!isComparing) {
-        isComparing = true;
-        compareBtn.classList.add('active');
-      }
+      if (!isComparing) setComparing(true);
       return;
     }
     const k = e.key.toLowerCase();
@@ -460,13 +407,10 @@
     if (k === 'm') { openMenu(); return; }
     if (e.key === '0') { activateMode('normal'); return; }
     const n = parseInt(e.key, 10);
-    if (n >= 1 && n <= KEY_MODES.length) activateMode(KEY_MODES[n - 1]);
+    if (n >= 1 && n <= 9 && n <= KEY_MODES.length) activateMode(KEY_MODES[n - 1]);
   });
   document.addEventListener('keyup', (e) => {
-    if (e.key === ' ' && isComparing) {
-      isComparing = false;
-      compareBtn.classList.remove('active');
-    }
+    if (e.key === ' ' && isComparing) setComparing(false);
   });
 
   // Retry after error

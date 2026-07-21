@@ -53,40 +53,9 @@
         <h2>Choose a Condition</h2>
         <button id="menu-close" aria-label="Close">&#x2715;</button>
       </div>
-      <div id="menu-scroll">
-
-        <div class="menu-group">
-          <p class="group-label">Colour Vision</p>
-          <div class="cond-grid">
-            <button class="cond-card active" data-mode="normal"><span class="card-icon">👁️</span><span class="card-name">Normal</span></button>
-            <button class="cond-card" data-mode="deuteranopia"><span class="card-icon">&#x1F7E2;</span><span class="card-name">Deuteranopia</span></button>
-            <button class="cond-card" data-mode="protanopia"><span class="card-icon">&#x1F534;</span><span class="card-name">Protanopia</span></button>
-            <button class="cond-card" data-mode="tritanopia"><span class="card-icon">&#x1F537;</span><span class="card-name">Tritanopia</span></button>
-            <button class="cond-card" data-mode="achromatopsia"><span class="card-icon">&#x1F4F7;</span><span class="card-name">Achromatopsia</span></button>
-          </div>
-        </div>
-
-        <div class="menu-group">
-          <p class="group-label">Eye Diseases</p>
-          <div class="cond-grid">
-            <button class="cond-card" data-mode="glaucoma"><span class="card-icon">🌑</span><span class="card-name">Glaucoma</span></button>
-            <button class="cond-card" data-mode="cataracts"><span class="card-icon">☁️</span><span class="card-name">Cataracts</span></button>
-            <button class="cond-card" data-mode="macular"><span class="card-icon">🔵</span><span class="card-name">Macular Degen.</span></button>
-            <button class="cond-card" data-mode="retinitis"><span class="card-icon">&#x1F52D;</span><span class="card-name">Retinitis P.</span></button>
-          </div>
-        </div>
-
-        <div class="menu-group">
-          <p class="group-label">Refractive Errors</p>
-          <div class="cond-grid">
-            <button class="cond-card" data-mode="myopia"><span class="card-icon">🌁</span><span class="card-name">Myopia</span></button>
-            <button class="cond-card" data-mode="hyperopia"><span class="card-icon">📖</span><span class="card-name">Hyperopia</span></button>
-            <button class="cond-card" data-mode="astigmatism"><span class="card-icon">✨</span><span class="card-name">Astigmatism</span></button>
-            <button class="cond-card" data-mode="presbyopia"><span class="card-icon">👓</span><span class="card-name">Presbyopia</span></button>
-          </div>
-        </div>
-
-      </div>
+      <!-- Menu groups + condition cards are generated from the
+           ColorBlind.CONDITIONS registry (see main.js) -->
+      <div id="menu-scroll"></div>
     </div>
   </dialog>
 
@@ -104,116 +73,9 @@
       </div>
     </div>
 
-    <!-- Condition-specific controls (shown only for structural conditions) -->
-    <div id="ctrl-wrap">
-
-    <!-- Glaucoma controls -->
-    <div id="ctrl-glaucoma" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Affected Field</label>
-        <div class="ctrl-toggle-group">
-          <button class="ctrl-btn active" data-ctrl="hemi" data-val="0">Superior</button>
-          <button class="ctrl-btn" data-ctrl="hemi" data-val="1">Inferior</button>
-        </div>
-      </div>
-      <div class="ctrl-row">
-        <label>Stage</label>
-        <div class="ctrl-toggle-group">
-          <button class="ctrl-btn active" data-ctrl="stage" data-val="0">Early</button>
-          <button class="ctrl-btn" data-ctrl="stage" data-val="0.5">Moderate</button>
-          <button class="ctrl-btn" data-ctrl="stage" data-val="1">Advanced</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Cataract controls -->
-    <div id="ctrl-cataracts" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Type</label>
-        <div class="ctrl-toggle-group">
-          <button class="ctrl-btn active" data-ctrl="ctype" data-val="0">Nuclear</button>
-          <button class="ctrl-btn" data-ctrl="ctype" data-val="1">Cortical</button>
-          <button class="ctrl-btn" data-ctrl="ctype" data-val="2">Posterior</button>
-        </div>
-      </div>
-      <div class="ctrl-row">
-        <label>Glare&nbsp;<span id="glare-val">50%</span></label>
-        <input id="glare-slider" type="range" min="0" max="100" value="50"
-               aria-label="Glare intensity" />
-      </div>
-    </div>
-
-    <!-- Macular degeneration controls -->
-    <div id="ctrl-macular" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Scotoma spots</label>
-        <div class="ctrl-toggle-group">
-          <button class="ctrl-btn" data-ctrl="spots" data-val="1">1 (Geographic)</button>
-          <button class="ctrl-btn active" data-ctrl="spots" data-val="2">2 (Moderate dry)</button>
-          <button class="ctrl-btn" data-ctrl="spots" data-val="3">3 (Early dry)</button>
-        </div>
-      </div>
-      <div class="ctrl-row">
-        <label>Waviness&nbsp;<span id="warp-val">50%</span></label>
-        <input id="warp-slider" type="range" min="0" max="100" value="50"
-               aria-label="Metamorphopsia waviness" />
-      </div>
-    </div>
-
-    <!-- Retinitis Pigmentosa controls -->
-    <div id="ctrl-retinitis" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Stage</label>
-        <div class="ctrl-toggle-group">
-          <button class="ctrl-btn active" data-ctrl="rpstage" data-val="0">Early</button>
-          <button class="ctrl-btn" data-ctrl="rpstage" data-val="1">Moderate</button>
-          <button class="ctrl-btn" data-ctrl="rpstage" data-val="2">Advanced</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Myopia controls -->
-    <div id="ctrl-myopia" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Severity&nbsp;<span id="myopia-val">−3D</span></label>
-        <input id="myopia-slider" type="range" min="0" max="100" value="33"
-               aria-label="Myopia prescription" />
-      </div>
-    </div>
-
-    <!-- Hyperopia controls -->
-    <div id="ctrl-hyperopia" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Severity&nbsp;<span id="hyperopia-val">+2D</span></label>
-        <input id="hyperopia-slider" type="range" min="0" max="100" value="33"
-               aria-label="Hyperopia prescription" />
-      </div>
-    </div>
-
-    <!-- Astigmatism controls -->
-    <div id="ctrl-astigmatism" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Axis&nbsp;<span id="astig-axis-val">0°</span></label>
-        <input id="astig-axis-slider" type="range" min="0" max="180" value="0"
-               aria-label="Astigmatism axis angle" />
-      </div>
-      <div class="ctrl-row">
-        <label>Severity&nbsp;<span id="astig-sev-val">2D</span></label>
-        <input id="astig-sev-slider" type="range" min="0" max="100" value="50"
-               aria-label="Astigmatism severity" />
-      </div>
-    </div>
-
-    <!-- Presbyopia controls -->
-    <div id="ctrl-presbyopia" class="condition-ctrl hidden">
-      <div class="ctrl-row">
-        <label>Age-related loss&nbsp;<span id="presbyopia-val">+2D</span></label>
-        <input id="presbyopia-slider" type="range" min="0" max="100" value="40"
-               aria-label="Presbyopia addition" />
-      </div>
-    </div>
-
-    </div><!-- /#ctrl-wrap -->
+    <!-- Condition-specific control panels are generated from the
+         ColorBlind.CONDITIONS registry (see main.js) -->
+    <div id="ctrl-wrap"></div>
 
     <!-- Single-row compact bar: condition picker · intensity · actions -->
     <div id="main-bar">
