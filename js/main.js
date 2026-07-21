@@ -265,11 +265,13 @@
 
   // ── Condition menu open / close ──────────────────────────────────────────
 
-  function openMenu()  { condMenu.classList.add('menu-open');    }
-  function closeMenu() { condMenu.classList.remove('menu-open'); }
+  // Native <dialog>: showModal() gives focus trapping and Escape-to-close.
+  function openMenu()  { condMenu.showModal(); }
+  function closeMenu() { condMenu.close(); }
 
   menuTrigger.addEventListener('click', openMenu);
   menuClose.addEventListener('click', closeMenu);
+  condMenu.addEventListener('close', () => menuTrigger.focus());
 
   // ── Activate a mode by name ───────────────────────────────────────────────
 
@@ -355,12 +357,17 @@
 
   // Condition-specific toggle buttons (ctrl-btn)
   document.querySelectorAll('.ctrl-btn').forEach(btn => {
+    btn.setAttribute('aria-pressed', String(btn.classList.contains('active')));
     btn.addEventListener('click', () => {
       const ctrl = btn.dataset.ctrl;
       const val  = parseFloat(btn.dataset.val);
       // Deactivate siblings with same data-ctrl
-      btn.closest('.ctrl-toggle-group').querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+      btn.closest('.ctrl-toggle-group').querySelectorAll('.ctrl-btn').forEach(b => {
+        b.classList.remove('active');
+        b.setAttribute('aria-pressed', 'false');
+      });
       btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
       // Map ctrl name to condParams entry
       if (ctrl === 'hemi')    condParams.glaucoma.p1  = val;
       if (ctrl === 'stage')   condParams.glaucoma.p2  = val;
@@ -423,7 +430,43 @@
   splitBtn.addEventListener('click', () => {
     isSplit = !isSplit;
     splitBtn.classList.toggle('active', isSplit);
+    splitBtn.setAttribute('aria-pressed', String(isSplit));
     splitDivider.classList.toggle('hidden', !isSplit);
+  });
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // 0 = normal, 1-9 = conditions in menu order, Space (hold) = compare,
+  // S = split, M = menu. Skipped while the dialog is open or a control that
+  // uses these keys itself has focus.
+  const KEY_MODES = ['deuteranopia', 'protanopia', 'tritanopia', 'achromatopsia',
+                     'glaucoma', 'cataracts', 'macular', 'retinitis', 'myopia'];
+
+  document.addEventListener('keydown', (e) => {
+    if (condMenu.open) return;
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+    if (e.key === ' ') {
+      if (t && t.tagName === 'BUTTON') return;   // let focused buttons activate
+      e.preventDefault();                         // no page scroll
+      if (!isComparing) {
+        isComparing = true;
+        compareBtn.classList.add('active');
+      }
+      return;
+    }
+    const k = e.key.toLowerCase();
+    if (k === 's') { splitBtn.click(); return; }
+    if (k === 'm') { openMenu(); return; }
+    if (e.key === '0') { activateMode('normal'); return; }
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= KEY_MODES.length) activateMode(KEY_MODES[n - 1]);
+  });
+  document.addEventListener('keyup', (e) => {
+    if (e.key === ' ' && isComparing) {
+      isComparing = false;
+      compareBtn.classList.remove('active');
+    }
   });
 
   // Retry after error

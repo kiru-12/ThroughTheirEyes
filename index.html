@@ -46,8 +46,8 @@
     </div>
   </div>
 
-  <!-- Fullscreen condition picker (shown via .menu-open class) -->
-  <div id="condition-menu" role="dialog" aria-modal="true" aria-label="Choose a condition">
+  <!-- Fullscreen condition picker (native modal dialog) -->
+  <dialog id="condition-menu" aria-label="Choose a condition">
     <div id="menu-inner">
       <div id="menu-header">
         <h2>Choose a Condition</h2>
@@ -88,7 +88,7 @@
 
       </div>
     </div>
-  </div>
+  </dialog>
 
   <!-- UI controls panel (bottom sheet) -->
   <div id="controls">
@@ -228,8 +228,10 @@
                aria-label="Simulation intensity" />
       </div>
       <div id="action-btns">
-        <button id="btn-compare" title="Hold to compare with normal vision">A|B</button>
-        <button id="btn-split"   title="Toggle split-screen view">Split</button>
+        <button id="btn-compare" title="Hold to compare with normal vision (or hold Space)"
+                aria-label="Hold to compare with normal vision">A|B</button>
+        <button id="btn-split"   title="Toggle split-screen view (S)"
+                aria-label="Toggle split-screen view" aria-pressed="false">Split</button>
       </div>
     </div>
 
