@@ -146,47 +146,6 @@ html, body {
   gap: 4px;
 }
 
-/* ── Mode selector ────────────────────────────────────────── */
-#mode-selector {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  padding: 2px 0;          /* room for focus ring */
-}
-
-#mode-selector::-webkit-scrollbar {
-  display: none;
-}
-
-.mode-btn {
-  flex-shrink: 0;
-  padding: 6px 15px;
-  border-radius: var(--radius);
-  border: 1.5px solid var(--btn-border);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.65);
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.mode-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.mode-btn.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-  font-weight: 650;
-}
-
 /* ── Condition-specific controls ─────────────────────────── */
 .condition-ctrl {
   overflow: hidden;

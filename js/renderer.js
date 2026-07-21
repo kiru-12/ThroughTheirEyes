@@ -414,12 +414,21 @@ const Renderer = (() => {
     });
   }
 
+  // Memoized CVD matrix — recomputing/allocating per frame is pointless
+  // garbage; mode and intensity only change on user input.
+  let cvdCacheMode = -1, cvdCacheIntensity = -1, cvdCacheMat = IDENTITY;
+
   function compositeDraw(w, h, mode, intensity, p1, p2) {
     let cvd = IDENTITY;
     let blend = intensity;
     if (mode >= 1 && mode <= 3) {
       // Intensity slider drives Machado severity; the matrix carries the effect.
-      cvd = CVDMatrices.toColumnMajor(CVDMatrices.matrix(CVD_TYPE[mode], intensity));
+      if (cvdCacheMode !== mode || cvdCacheIntensity !== intensity) {
+        cvdCacheMat = CVDMatrices.toColumnMajor(CVDMatrices.matrix(CVD_TYPE[mode], intensity));
+        cvdCacheMode = mode;
+        cvdCacheIntensity = intensity;
+      }
+      cvd = cvdCacheMat;
       blend = 1.0;
     }
     gl.useProgram(pComposite.program);

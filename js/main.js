@@ -47,6 +47,13 @@
     cataracts:'Cataracts', macular:'Macular Degen.', retinitis:'Retinitis P.',
     myopia:'Myopia', hyperopia:'Hyperopia', astigmatism:'Astigmatism', presbyopia:'Presbyopia'
   };
+  // Menu cards take their icon from the ICONS map so the cards and the
+  // trigger button always agree (single source of truth).
+  condCards.forEach(c => {
+    const ic = c.querySelector('.card-icon');
+    if (ic && ICONS[c.dataset.mode]) ic.textContent = ICONS[c.dataset.mode];
+  });
+
   const slider       = document.getElementById('intensity-slider');
   const intensityVal = document.getElementById('intensity-val');
   const compareBtn   = document.getElementById('btn-compare');
@@ -321,6 +328,12 @@
     compareBtn.classList.remove('active');
   });
   compareBtn.addEventListener('pointerleave', () => {
+    isComparing = false;
+    compareBtn.classList.remove('active');
+  });
+  // pointercancel fires when the browser takes over the gesture (e.g. scroll);
+  // without it the compare state would stick on.
+  compareBtn.addEventListener('pointercancel', () => {
     isComparing = false;
     compareBtn.classList.remove('active');
   });

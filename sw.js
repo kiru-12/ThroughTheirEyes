@@ -7,7 +7,7 @@
  *   - Bump CACHE_VERSION whenever any cached file changes to force an update.
  */
 
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const CACHE_NAME = `tte-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -65,7 +65,12 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => cached);
+        .catch(() => {
+          // Offline and not in cache: serve the app shell for navigations,
+          // otherwise a proper 503 (never resolve with undefined).
+          if (request.mode === 'navigate') return caches.match('./index.html');
+          return new Response('', { status: 503, statusText: 'Offline' });
+        });
     })
   );
 });
