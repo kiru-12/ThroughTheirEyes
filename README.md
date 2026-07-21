@@ -12,8 +12,14 @@ A mobile-first PWA that uses your device's camera and WebGL to simulate 13 visio
 - **Scientifically grounded** — Machado 2009 (protan/deutan), Brettel 1997 (tritan), and clinically validated structural models
 - **Daltonization** — a "Correct" mode on the colour-vision conditions redistributes lost colour information instead of simulating the loss
 - **Condition-specific controls** — adjust subtype, stage, severity, and axis for each condition
-- **Split-screen mode** — compare normal and simulated vision side by side
-- **Hold-to-compare** — instantly toggle back to normal vision
+- **Split-screen mode** — compare normal and simulated vision side by side, with a draggable divider
+- **Hold-to-compare** — instantly toggle back to normal vision (hold the A|B button or Space)
+- **Photo mode** — load any image and simulate on it, no camera needed (great for checking your own designs)
+- **Sample plates** — procedurally generated pseudo-Ishihara test plates when no camera is available
+- **Freeze-frame** — pause the feed and adjust severity on a still frame
+- **Snapshot** — save or share a PNG of the simulated view
+- **Torch & zoom** — camera flashlight and zoom controls where the hardware supports them
+- **Keyboard shortcuts** — 0-9 select conditions, Space compares, S splits, F freezes, M opens the menu
 - **PWA** — works offline, installable on mobile
 
 ## Conditions

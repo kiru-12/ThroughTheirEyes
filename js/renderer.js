@@ -21,9 +21,13 @@
  * glaucoma / macular degeneration model the clinically-correct "filling-in"
  * appearance (blur + desaturation + contrast loss) rather than pure black.
  *
- * Public API (unchanged):
+ * Public API:
  *   Renderer.init(canvas)
- *   Renderer.render(video, { mode, intensity, isSplit, p1, p2 })
+ *   Renderer.render(source, { mode, intensity, isSplit, splitX, p1, p2,
+ *                             freeze, staticSource })
+ *   source: HTMLVideoElement | HTMLImageElement | ImageBitmap | canvas
+ *   freeze: keep showing the last uploaded frame
+ *   staticSource: source never changes between frames (upload once)
  *
  * Algorithms & sources:
  *   Protan/Deutan        : Machado, Oliveira & Fernandes 2009 (linear-RGB matrix)
@@ -353,6 +357,7 @@ const Renderer = (() => {
   let scene, halfA, halfB, quarterA, quarterB, bloom;
   let fbW = 0, fbH = 0;
   let texAllocated = false, texW = 0, texH = 0;
+  let lastSource = null;
   let initialized = false;
   let contextLost = false;
 
@@ -532,7 +537,7 @@ const Renderer = (() => {
     });
     canvas.addEventListener('webglcontextrestored', () => {
       // The context is reset: all old buffers/textures/programs are invalid.
-      texAllocated = false; texW = 0; texH = 0;
+      texAllocated = false; texW = 0; texH = 0; lastSource = null;
       fbW = 0; fbH = 0;
       scene = halfA = halfB = quarterA = quarterB = bloom = null;
       createResources();
@@ -546,21 +551,23 @@ const Renderer = (() => {
   function isContextLost() { return contextLost; }
 
   // ── Public: render ─────────────────────────────────────────────────────────
-  function render(video, state) {
+  function render(source, state) {
     if (contextLost) return;
     const w = gl.canvas.width;
     const h = gl.canvas.height;
     resizeTargets(w, h);
 
-    // Upload current video frame (allocate once, then sub-image)
-    const vw = video.videoWidth || 16;
-    const vh = video.videoHeight || 9;
+    // Upload the current frame (allocate on size/source change, then
+    // sub-image). Static sources (photos, generated plates) upload once;
+    // freeze keeps whatever frame is already on the GPU.
+    const vw = source.videoWidth || source.naturalWidth || source.width || 16;
+    const vh = source.videoHeight || source.naturalHeight || source.height || 9;
     gl.bindTexture(gl.TEXTURE_2D, videoTex);
-    if (!texAllocated || vw !== texW || vh !== texH) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-      texAllocated = true; texW = vw; texH = vh;
-    } else {
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    if (!texAllocated || vw !== texW || vh !== texH || source !== lastSource) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+      texAllocated = true; texW = vw; texH = vh; lastSource = source;
+    } else if (!state.freeze && !state.staticSource) {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source);
     }
 
     // Pass 1 — scene (aspect-cover)
@@ -599,7 +606,8 @@ const Renderer = (() => {
     const p2 = state.p2 != null ? state.p2 : 0.0;
 
     if (state.isSplit) {
-      const halfx = Math.floor(w / 2);
+      const sx = state.splitX != null ? state.splitX : 0.5;
+      const halfx = Math.floor(w * sx);
       gl.enable(gl.SCISSOR_TEST);
       gl.scissor(0, 0, halfx, h);
       compositeDraw(w, h, 0, 1.0, 0, 0);                          // left = normal

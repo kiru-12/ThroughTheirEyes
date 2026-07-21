@@ -22,10 +22,11 @@
   <!-- WebGL canvas: fills the entire screen -->
   <canvas id="gl-canvas"></canvas>
 
-  <!-- Split-screen divider + half labels -->
+  <!-- Split-screen divider + half labels (handle is draggable) -->
   <div id="split-divider" class="hidden">
     <span class="label-left">Normal</span>
     <span class="label-right">Simulated</span>
+    <div id="split-handle" aria-hidden="true"></div>
   </div>
 
   <!-- Loading overlay -->
@@ -43,6 +44,7 @@
       <h2 id="error-title">Camera Access Needed</h2>
       <p id="error-msg">This app needs camera permission to simulate color blindness in real-time.</p>
       <button id="btn-retry">Try Again</button>
+      <button id="btn-samples">Try Sample Images</button>
     </div>
   </div>
 
@@ -77,6 +79,12 @@
          ColorBlind.CONDITIONS registry (see main.js) -->
     <div id="ctrl-wrap"></div>
 
+    <!-- Camera zoom (shown only when the camera supports it) -->
+    <div id="zoom-row" class="ctrl-row hidden">
+      <label for="zoom-slider">Zoom</label>
+      <input id="zoom-slider" type="range" aria-label="Camera zoom" />
+    </div>
+
     <!-- Single-row compact bar: condition picker · intensity · actions -->
     <div id="main-bar">
       <button id="mode-trigger" aria-label="Change vision condition">
@@ -94,8 +102,20 @@
                 aria-label="Hold to compare with normal vision">A|B</button>
         <button id="btn-split"   title="Toggle split-screen view (S)"
                 aria-label="Toggle split-screen view" aria-pressed="false">Split</button>
+        <button id="btn-freeze"  title="Freeze frame (F)"
+                aria-label="Freeze frame" aria-pressed="false">&#9208;</button>
+        <button id="btn-share"   title="Save or share a snapshot"
+                aria-label="Save or share a snapshot">&#128248;</button>
+        <button id="btn-photo"   title="Simulate on a photo"
+                aria-label="Load a photo to simulate on">&#128444;&#65039;</button>
+        <button id="btn-camera"  class="hidden" title="Back to live camera"
+                aria-label="Back to live camera">&#127909;</button>
+        <button id="btn-torch"   class="hidden" title="Toggle flashlight"
+                aria-label="Toggle flashlight" aria-pressed="false">&#128294;</button>
       </div>
     </div>
+
+    <input id="photo-input" type="file" accept="image/*" hidden />
 
   </div>
 

@@ -44,8 +44,21 @@ html, body {
   z-index: 5;
 }
 
-/* Vertical divider line */
-#split-divider::after {
+/* Draggable divider handle: a wide invisible hit area with the visible
+   line and a centre grip drawn inside it */
+#split-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 32px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+#split-handle::after {
   content: '';
   position: absolute;
   top: 0;
@@ -55,6 +68,21 @@ html, body {
   background: rgba(255, 255, 255, 0.55);
   transform: translateX(-50%);
   box-shadow: 0 0 8px rgba(0,0,0,0.6);
+}
+
+#split-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 8px rgba(0,0,0,0.6);
+  z-index: 1;
 }
 
 .label-left,
@@ -276,6 +304,26 @@ input[type="range"] {
 
 #btn-retry:hover {
   filter: brightness(1.1);
+}
+
+/* Secondary action on the error overlay (camera-less fallback) */
+#btn-samples {
+  display: block;
+  margin: 12px auto 0;
+  padding: 9px 24px;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--btn-border);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-samples:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ── Info panel ───────────────────────────────────────────── */
