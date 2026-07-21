@@ -42,6 +42,15 @@ npx serve .
 
 Then open `http://localhost:3000`.
 
+## Testing
+
+The pure-math modules (CVD matrices, condition registry, label formatters) are
+unit-tested with Node's built-in test runner — no dependencies:
+
+```bash
+npm test
+```
+
 ## Tech stack
 
 - Vanilla HTML / CSS / JavaScript — no framework, no build step

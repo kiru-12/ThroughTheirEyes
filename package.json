@@ -1,0 +1,9 @@
+{
+  "name": "throughtheireyes",
+  "private": true,
+  "description": "Vision condition simulator PWA — see the world through someone else's eyes",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test"
+  }
+}
