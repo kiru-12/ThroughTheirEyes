@@ -4,6 +4,11 @@ A mobile-first PWA that uses your device's camera and WebGL to simulate 13 visio
 
 **[Live demo →](https://kiru-12.github.io/ThroughTheirEyes/)**
 
+> ⚕️ **Disclaimer:** This is an educational simulation, not a diagnostic tool or
+> medical advice. It is an artistic approximation of how these conditions *may*
+> appear, not a measurement of any individual's vision. If you have any concern
+> about your eyesight, please see an optometrist or ophthalmologist.
+
 ---
 
 ## Features
@@ -41,6 +46,21 @@ npx serve .
 ```
 
 Then open `http://localhost:3000`.
+
+## How accurate is this?
+
+Accuracy varies by condition, and it's worth being honest about it:
+
+- **Colour-vision deficiency** (protan/deutan/tritan) uses the same peer-reviewed
+  models as research and browser tooling (Machado 2009, Brettel 1997) with a
+  correct sRGB↔linear pipeline. This part is research-grade.
+- **Structural and refractive conditions** (glaucoma, AMD, cataracts, retinitis
+  pigmentosa, myopia, etc.) are **illustrative approximations**, not validated
+  models. Scotoma shapes are procedurally generated to look organic rather than
+  fitted to any individual's visual-field data, and a 2D camera cannot reproduce
+  the depth-dependent focus of real refractive errors.
+
+Treat it as an empathy and awareness tool, not a clinical reference.
 
 ## Testing
 

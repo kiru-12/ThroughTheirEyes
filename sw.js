@@ -7,7 +7,7 @@
  *   - Bump CACHE_VERSION whenever any cached file changes to force an update.
  */
 
-const CACHE_VERSION = 'v9';
+const CACHE_VERSION = 'v10';
 const CACHE_NAME = `tte-shell-${CACHE_VERSION}`;
 
 const APP_SHELL = [
