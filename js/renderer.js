@@ -316,6 +316,7 @@ const Renderer = (() => {
   let fbW = 0, fbH = 0;
   let texAllocated = false, texW = 0, texH = 0;
   let initialized = false;
+  let contextLost = false;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function compileShader(type, src) {
@@ -446,14 +447,9 @@ const Renderer = (() => {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
-  // ── Public: init ───────────────────────────────────────────────────────────
-  function init(canvas) {
-    if (initialized) return;
-    gl = canvas.getContext('webgl2')
-      || canvas.getContext('webgl')
-      || canvas.getContext('experimental-webgl');
-    if (!gl) throw new Error('no-context');
-
+  // Create every GPU-side resource. Called at init and again after a
+  // restored context (which resets the context and invalidates all objects).
+  function createResources() {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
     quadBuffer = gl.createBuffer();
@@ -478,12 +474,40 @@ const Renderer = (() => {
       'u_scene', 'u_blur1', 'u_blur2', 'u_bloom', 'u_resolution',
       'u_mode', 'u_intensity', 'u_p1', 'u_p2', 'u_cvd'
     ]);
+  }
 
+  // ── Public: init ───────────────────────────────────────────────────────────
+  function init(canvas) {
+    if (initialized) return;
+    gl = canvas.getContext('webgl2')
+      || canvas.getContext('webgl')
+      || canvas.getContext('experimental-webgl');
+    if (!gl) throw new Error('no-context');
+
+    // Mobile GPUs evict contexts under memory pressure / backgrounding.
+    // preventDefault() on "lost" tells the browser we can handle a restore.
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      contextLost = true;
+    });
+    canvas.addEventListener('webglcontextrestored', () => {
+      // The context is reset: all old buffers/textures/programs are invalid.
+      texAllocated = false; texW = 0; texH = 0;
+      fbW = 0; fbH = 0;
+      scene = halfA = halfB = quarterA = quarterB = bloom = null;
+      createResources();
+      contextLost = false;
+    });
+
+    createResources();
     initialized = true;
   }
 
+  function isContextLost() { return contextLost; }
+
   // ── Public: render ─────────────────────────────────────────────────────────
   function render(video, state) {
+    if (contextLost) return;
     const w = gl.canvas.width;
     const h = gl.canvas.height;
     resizeTargets(w, h);
@@ -547,6 +571,6 @@ const Renderer = (() => {
     }
   }
 
-  return { init, render };
+  return { init, render, isContextLost };
 
 })();

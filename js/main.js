@@ -145,6 +145,10 @@
     // Skip frames until the video has decoded at least one frame
     if (video.readyState < 2) return;
 
+    // Nothing valid to draw into while the GPU context is gone; the renderer
+    // rebuilds its resources on restore and we simply resume.
+    if (Renderer.isContextLost()) return;
+
     resizeCanvas();
     // Compare-hold shows normal vision; otherwise use the active mode's params.
     const modeName = isComparing ? 'normal' : currentModeName;
@@ -198,6 +202,15 @@
         },
         audio: false
       });
+
+      // If the OS revokes the camera (sleep, another app claims it), surface
+      // the error overlay instead of freezing on the last frame.
+      const track = mediaStream.getVideoTracks()[0];
+      if (track) {
+        track.addEventListener('ended', () => {
+          showError('Camera Stopped', 'The camera stream ended unexpectedly. Tap "Try Again" to restart it.');
+        });
+      }
 
       video.srcObject = mediaStream;
       await video.play();
@@ -415,6 +428,18 @@
 
   // Retry after error
   retryBtn.addEventListener('click', startCamera);
+
+  // Coming back from the background: mobile browsers often pause the video
+  // element or kill the track entirely. Resume or restart as needed.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || !mediaStream) return;
+    const track = mediaStream.getVideoTracks()[0];
+    if (!track || track.readyState === 'ended') {
+      startCamera();
+    } else if (video.paused) {
+      video.play().catch(() => { /* will recover on next user interaction */ });
+    }
+  });
 
   // Keep canvas pixel dimensions in sync with the window
   window.addEventListener('resize', resizeCanvas);
