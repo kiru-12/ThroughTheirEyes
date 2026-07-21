@@ -26,7 +26,10 @@
  *   Renderer.render(video, { mode, intensity, isSplit, p1, p2 })
  *
  * Algorithms & sources:
- *   Protan/Deutan/Tritan : Machado, Oliveira & Fernandes 2009 (linear-RGB matrix)
+ *   Protan/Deutan        : Machado, Oliveira & Fernandes 2009 (linear-RGB matrix)
+ *   Tritan               : Brettel, Viénot & Mollon 1997 two-plane projection
+ *                          (sRGB-adapted constants from DaltonLens)
+ *   Daltonization        : Fidaner et al. 2005 error redistribution
  *   Achromatopsia        : rod-weighted (scotopic) luminance + photophobia bloom
  *   Gaussian blur        : separable 9-tap (GPU Gems weights)
  *   Blur ↔ linear light  : blurred in sRGB then decoded (matches classic approach)
@@ -148,6 +151,23 @@ const Renderer = (() => {
     vec3 desat(vec3 c, float amt) { return mix(c, vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), amt); }
     vec3 contrast(vec3 c, float amt) { return (c - 0.5) * amt + 0.5; }
 
+    // Daltonization (Fidaner et al. 2005): compute the information lost to the
+    // deficiency and redistribute it into channels the viewer can still see.
+    // RG variant: red-green error into green/blue (protan/deutan).
+    // BY variant: blue-yellow error into red/green (tritan).
+    vec3 daltonizeRG(vec3 orig, vec3 sim) {
+      vec3 err = orig - sim;
+      return clamp(orig + vec3(0.0,
+                               0.7 * err.r + err.g,
+                               0.7 * err.r + err.b), 0.0, 1.0);
+    }
+    vec3 daltonizeBY(vec3 orig, vec3 sim) {
+      vec3 err = orig - sim;
+      return clamp(orig + vec3(err.r + 0.7 * err.b,
+                               err.g + 0.7 * err.b,
+                               0.0), 0.0, 1.0);
+    }
+
     // Blur-pyramid sample in linear RGB. amount: 0=sharp, 1=blur1, 2=blur2.
     vec3 defocus(vec2 uv, float amount) {
       vec3 s = srgbToLinear(texture2D(u_scene, uv).rgb);
@@ -171,10 +191,28 @@ const Renderer = (() => {
         // 0 — Normal
         sim = lin;
 
-      } else if (u_mode < 3.5) {
-        // 1-3 — Colour vision deficiency (Machado 2009, applied in linear RGB).
-        // Severity is already encoded in u_cvd, so no extra blend is needed.
+      } else if (u_mode < 2.5) {
+        // 1-2 — Protanopia / deuteranopia (Machado 2009, applied in linear
+        // RGB). Severity is already encoded in u_cvd, so no extra blend is
+        // needed. u_p2 toggles daltonization (correction) instead.
         sim = u_cvd * lin;
+        if (u_p2 > 0.5) sim = daltonizeRG(lin, sim);
+
+      } else if (u_mode < 3.5) {
+        // 3 — Tritanopia: Brettel, Viénot & Mollon 1997 two-plane projection
+        // (sRGB-adapted constants from DaltonLens). The Machado severity fit
+        // is unreliable for tritan, so severity comes from the final
+        // intensity mix instead. GLSL mat3() is column-major, so the
+        // row-major source matrices are applied as v*M (row vector).
+        mat3 T1 = mat3( 1.01277,  0.13548, -0.14826,
+                       -0.01243,  0.86812,  0.14431,
+                        0.07589,  0.80500,  0.11911);
+        mat3 T2 = mat3( 0.93678,  0.18979, -0.12657,
+                        0.06154,  0.81526,  0.12320,
+                       -0.37562,  1.12767,  0.24796);
+        vec3 sepN = vec3(0.03901, -0.02788, -0.01113);
+        sim = (dot(lin, sepN) >= 0.0) ? lin * T1 : lin * T2;
+        if (u_p2 > 0.5) sim = daltonizeBY(lin, sim);
 
       } else if (u_mode < 4.5) {
         // 4 — Achromatopsia (rod monochromacy): scotopic (rod-weighted) luminance,
@@ -305,8 +343,8 @@ const Renderer = (() => {
     }
   `;
 
-  // ── CVD mode → Machado type ────────────────────────────────────────────────
-  const CVD_TYPE = { 1: 'protanopia', 2: 'deuteranopia', 3: 'tritanopia' };
+  // ── CVD mode → Machado type (tritanopia uses Brettel, in-shader) ──────────
+  const CVD_TYPE = { 1: 'protanopia', 2: 'deuteranopia' };
   const IDENTITY = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 
   // ── Private state ──────────────────────────────────────────────────────────
@@ -422,8 +460,10 @@ const Renderer = (() => {
   function compositeDraw(w, h, mode, intensity, p1, p2) {
     let cvd = IDENTITY;
     let blend = intensity;
-    if (mode >= 1 && mode <= 3) {
-      // Intensity slider drives Machado severity; the matrix carries the effect.
+    if (mode >= 1 && mode <= 2) {
+      // Intensity slider drives Machado severity; the matrix carries the
+      // effect. (Tritanopia, mode 3, projects in-shader via Brettel and
+      // keeps blend = intensity for its severity.)
       if (cvdCacheMode !== mode || cvdCacheIntensity !== intensity) {
         cvdCacheMat = CVDMatrices.toColumnMajor(CVDMatrices.matrix(CVD_TYPE[mode], intensity));
         cvdCacheMode = mode;

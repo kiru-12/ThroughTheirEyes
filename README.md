@@ -9,7 +9,8 @@ A mobile-first PWA that uses your device's camera and WebGL to simulate 13 visio
 ## Features
 
 - **13 vision conditions** simulated in real time at 60 fps via WebGL
-- **Scientifically grounded** — uses the Machado et al. 2009 physiologically-based CVD model and clinically validated structural models
+- **Scientifically grounded** — Machado 2009 (protan/deutan), Brettel 1997 (tritan), and clinically validated structural models
+- **Daltonization** — a "Correct" mode on the colour-vision conditions redistributes lost colour information instead of simulating the loss
 - **Condition-specific controls** — adjust subtype, stage, severity, and axis for each condition
 - **Split-screen mode** — compare normal and simulated vision side by side
 - **Hold-to-compare** — instantly toggle back to normal vision
@@ -44,7 +45,9 @@ Then open `http://localhost:3000`.
 
 ## Algorithms
 
-- **Protanopia / Deuteranopia / Tritanopia** — Machado, Oliveira & Fernandes 2009 severity matrices, applied in linear RGB; the intensity slider drives clinical severity
+- **Protanopia / Deuteranopia** — Machado, Oliveira & Fernandes 2009 severity matrices, applied in linear RGB; the intensity slider drives clinical severity
+- **Tritanopia** — Brettel, Viénot & Mollon 1997 two-plane projection (sRGB-adapted constants from DaltonLens); the Machado severity fit is unreliable for tritan
+- **Daltonization** — Fidaner et al. 2005 error redistribution ("Correct" mode)
 - **Achromatopsia** — rod-weighted (scotopic) luminance + photophobia bloom
 - **sRGB pipeline** — full IEC 61966-2-1 encode/decode on every pixel
 

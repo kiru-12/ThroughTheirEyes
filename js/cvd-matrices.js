@@ -5,11 +5,15 @@
  * Simulation of Color Vision Deficiency" (IEEE TVCG 15(6):1291-1298).
  *
  * These are the authors' pre-computed RGB→RGB simulation matrices for
- * protanomaly, deuteranomaly and tritanomaly at severities 0.0–1.0 (step 0.1),
- * where 1.0 == full dichromacy and 0.0 == normal vision. Unlike the older
+ * protanomaly and deuteranomaly at severities 0.0–1.0 (step 0.1), where
+ * 1.0 == full dichromacy and 0.0 == normal vision. Unlike the older
  * Viénot/Brettel dichromacy-only models, this reproduces the whole spectrum of
  * *anomalous trichromacy* (which is the common real-world case) by modelling a
  * shift in the cone photopigment peak wavelength.
+ *
+ * Tritanopia is NOT handled here: the Machado severity fit is unreliable for
+ * tritan, so the shader uses the Brettel 1997 two-plane projection instead
+ * (see renderer.js).
  *
  * Source table: https://www.inf.ufrgs.br/~oliveira/pubs_files/CVD_Simulation/
  * The matrices are applied to LINEAR RGB (inside the sRGB↔linear sandwich),
@@ -48,25 +52,11 @@ const CVDMatrices = (() => {
     [0.367322,0.860646,-0.227968, 0.280085,0.672501,0.047413, -0.011820,0.042940,0.968881],
   ];
 
-  const tritan = [
-    [1,0,0, 0,1,0, 0,0,1],
-    [0.926670,0.092514,-0.019184, 0.021191,0.964503,0.014306, 0.008437,0.054813,0.936750],
-    [0.895720,0.133330,-0.029050, 0.029997,0.945400,0.024603, 0.013027,0.104707,0.882266],
-    [0.905871,0.127791,-0.033662, 0.026856,0.941251,0.031893, 0.013410,0.148296,0.838294],
-    [0.948035,0.089490,-0.037526, 0.014364,0.946792,0.038844, 0.010853,0.193991,0.795156],
-    [1.017277,0.027029,-0.044306, -0.006113,0.958479,0.047634, 0.006379,0.248708,0.744913],
-    [1.104996,-0.046633,-0.058363, -0.032137,0.971635,0.060503, 0.001336,0.317922,0.680742],
-    [1.193214,-0.109812,-0.083402, -0.058496,0.979410,0.079086, -0.002346,0.403492,0.598854],
-    [1.257728,-0.139648,-0.118081, -0.078003,0.975409,0.102594, -0.003316,0.501214,0.502102],
-    [1.278864,-0.125333,-0.153531, -0.084748,0.957674,0.127074, -0.000989,0.601151,0.399838],
-    [1.255528,-0.076749,-0.178779, -0.078411,0.930809,0.147602, 0.004733,0.691367,0.303900],
-  ];
-
-  const TABLES = { protanopia: protan, deuteranopia: deutan, tritanopia: tritan };
+  const TABLES = { protanopia: protan, deuteranopia: deutan };
 
   /**
    * Interpolated row-major 3x3 matrix for a CVD type at a given severity.
-   * @param {'protanopia'|'deuteranopia'|'tritanopia'} type
+   * @param {'protanopia'|'deuteranopia'} type
    * @param {number} severity 0.0–1.0
    * @returns {number[]} 9-element row-major matrix
    */
@@ -100,3 +90,6 @@ const CVDMatrices = (() => {
   return { matrix, toColumnMajor };
 
 })();
+
+// Node (unit tests) — no-op in the browser.
+if (typeof module !== 'undefined') module.exports = CVDMatrices;

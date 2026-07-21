@@ -25,6 +25,13 @@ const ColorBlind = (() => {
     degrees:    v => v + '°',
   };
 
+  // Shared control: simulate the deficiency, or daltonize (redistribute the
+  // lost colour information so a CVD viewer can distinguish it).
+  const CVD_MODE_TOGGLE = {
+    type: 'toggle', param: 'p2', label: 'Mode', default: 0,
+    options: [{ label: 'Simulate', value: 0 }, { label: 'Correct (daltonize)', value: 1 }],
+  };
+
   const CONDITIONS = [
     {
       name: 'normal', index: 0, icon: '👁️', label: 'Normal',
@@ -37,7 +44,7 @@ const ColorBlind = (() => {
         title: 'Deuteranopia (Green-Blind)',
         text: "The most common type, affecting about 1 in 12 men. The green-sensing cells are missing. Greens and reds look alike — both appear as muddy yellows or browns."
       },
-      controls: [],
+      controls: [CVD_MODE_TOGGLE],
     },
     {
       name: 'protanopia', index: 1, icon: '🔴', label: 'Protanopia',
@@ -46,7 +53,7 @@ const ColorBlind = (() => {
         title: 'Protanopia (Red-Blind)',
         text: "The eye is missing its red-sensing cells. Reds look dark and dull, and it's hard to tell red from green — traffic lights and ripe fruit can look nearly identical."
       },
-      controls: [],
+      controls: [CVD_MODE_TOGGLE],
     },
     {
       name: 'tritanopia', index: 3, icon: '🔵', label: 'Tritanopia',
@@ -55,7 +62,7 @@ const ColorBlind = (() => {
         title: 'Tritanopia (Blue-Blind)',
         text: "Very rare — only about 1 in 10,000 people. The blue-sensing cells are missing. Blues look greenish, and yellows appear pinkish or violet."
       },
-      controls: [],
+      controls: [CVD_MODE_TOGGLE],
     },
     {
       name: 'achromatopsia', index: 4, icon: '📷', label: 'Achromatopsia',
