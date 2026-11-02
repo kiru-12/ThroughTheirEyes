@@ -386,6 +386,11 @@ input[type="range"] {
 }
 
 /* ── Mode trigger button ──────────────────────────────────── */
+/* Normal vision: no intensity slider, so spread trigger and actions apart */
+#main-bar.no-intensity {
+  justify-content: space-between;
+}
+
 #mode-trigger {
   display: flex;
   align-items: center;
