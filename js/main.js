@@ -305,6 +305,7 @@
   function useStaticSource(src, isSample) {
     if (!ensureRendering()) return;
     stopCameraStream();
+    if (src !== photoSource) releasePhoto();   // sample plate replaces a photo
     currentSource = src;
     sourceIsVideo = false;
     sampleMode    = isSample;
@@ -382,15 +383,30 @@
 
   // ── Photo mode ────────────────────────────────────────────────────────────
 
+  // The currently loaded photo (ImageBitmap or <img> + object URL) so it can
+  // be released when replaced; otherwise every photo leaks GPU/blob memory.
+  let photoSource = null, photoObjectURL = null;
+
+  function releasePhoto() {
+    if (photoSource && typeof photoSource.close === 'function') photoSource.close();
+    if (photoObjectURL) URL.revokeObjectURL(photoObjectURL);
+    photoSource = null;
+    photoObjectURL = null;
+  }
+
   async function fileToSource(file) {
     if ('createImageBitmap' in window) {
+      // Honour EXIF orientation so phone photos are not shown rotated.
+      try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+      catch (e) { /* fall through */ }
       try { return await createImageBitmap(file); } catch (e) { /* fall through */ }
     }
     return new Promise((resolve, reject) => {
       const img = new Image();
-      img.onload  = () => resolve(img);
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
+      const url = URL.createObjectURL(file);
+      img.onload  = () => { photoObjectURL = url; resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+      img.src = url;
     });
   }
 
@@ -400,7 +416,10 @@
     photoInput.value = '';
     if (!file) return;
     try {
-      useStaticSource(await fileToSource(file), false);
+      const src = await fileToSource(file);
+      releasePhoto();
+      photoSource = src;
+      useStaticSource(src, false);
     } catch (e) {
       showError('Image Error', 'That image could not be loaded. Please try a different file.');
     }
@@ -485,6 +504,7 @@
       loadingEl.classList.add('hidden');
 
       // Back on the live camera source
+      releasePhoto();
       currentSource = video;
       sourceIsVideo = true;
       sampleMode    = false;
@@ -659,8 +679,18 @@
   // control that uses these keys itself has focus.
   const KEY_MODES = ColorBlind.CONDITIONS.filter(c => c.name !== 'normal').map(c => c.name);
 
+  // Mouse/touch clicks on the action bar leave focus on the button, which
+  // would swallow the Space shortcut below. Drop focus after pointer clicks
+  // (e.detail === 0 means a keyboard-initiated click, which keeps focus).
+  document.getElementById('controls').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b && e.detail > 0) b.blur();
+  });
+
   document.addEventListener('keydown', (e) => {
     if (condMenu.open) return;
+    // Never hijack browser/OS chords (Ctrl+S save, Ctrl+F find, Cmd+M …).
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
 

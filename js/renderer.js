@@ -239,24 +239,28 @@ const Renderer = (() => {
         vec3  w    = vec3(0.15, 0.55, 0.30);        // rods peak ~507nm → green/blue
         vec3  soft = defocus(uv, 0.6);              // reduced visual acuity
         float g    = mix(dot(lin, w), dot(soft, w), 0.45);
-        vec3  bloom = srgbToLinear(texture2D(u_bloom, uv).rgb);
-        sim = vec3(g) + bloom * 1.3;
+        // Bloom must be achromatic too: a rod monochromat sees no colour in
+        // halos, so collapse the (RGB) bright-pass to rod luminance first.
+        float bl   = dot(srgbToLinear(texture2D(u_bloom, uv).rgb), w);
+        sim = vec3(g + bl * 1.3);
 
       } else if (u_mode < 5.5) {
         // 5 — Glaucoma: arcuate nerve-fibre scotoma + nasal step. The brain
         // "fills in" the missing field, so loss appears as blur + desaturation +
         // reduced contrast (NOT black), with a global contrast-sensitivity drop.
         float stage = u_p2;
-        float arcOffset = u_p1 * 0.45;
-        vec2  arcCentre = vec2(ac.x, ac.y - arcOffset);
-        float arcDist   = length(arcCentre);
+        // u_p1: 0 = superior field affected, 1 = inferior. Flip the vertical
+        // axis for inferior so the arcuate band sits in the lower hemifield.
+        // (sign(u_p1 + 0.01) was +1 for both options, so Inferior never flipped.)
+        float flip      = (u_p1 > 0.5) ? -1.0 : 1.0;
+        float arcDist   = r;
         float bandInner = 0.12;
         float bandOuter = mix(0.38, 0.50, stage);
         float inBand    = smoothstep(bandInner, bandInner + 0.06, arcDist) *
                           (1.0 - smoothstep(bandOuter, bandOuter + 0.08, arcDist));
-        float hemiBlend = smoothstep(-0.08, 0.08, arcCentre.y * sign(u_p1 + 0.01));
+        float hemiBlend = smoothstep(-0.08, 0.08, ac.y * flip);
         float scotoma   = inBand * hemiBlend;
-        float nasalDist = length(vec2(max(0.0, -ac.x * sign(u_p1 + 0.01)) - 0.12, ac.y));
+        float nasalDist = length(vec2(max(0.0, -ac.x * flip) - 0.12, ac.y));
         scotoma = max(scotoma, smoothstep(0.18, 0.06, nasalDist) * 0.8);
         float peripLoss = smoothstep(0.28, 0.42, r) * stage;
         float loss = max(scotoma, peripLoss);
@@ -343,7 +347,9 @@ const Renderer = (() => {
         // 11 — Astigmatism: directional (single-meridian) smear + light streaks.
         float angle = u_p1;
         float sev   = u_p2;
-        float blurR = mix(2.0, 16.0, sev);
+        // Smear radius is expressed for a 1080-px-tall frame and scaled with
+        // the actual height, so the effect is identical at any DPR / DPR cap.
+        float blurR = mix(2.0, 16.0, sev) * (u_resolution.y / 1080.0);
         vec2  dir = normalize(vec2(cos(angle + 1.5708), sin(angle + 1.5708)));
         vec2  tx  = 1.0 / u_resolution;
         vec3  b  = srgbToLinear(texture2D(u_scene, uv).rgb) * 0.20;
