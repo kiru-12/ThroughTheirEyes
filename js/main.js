@@ -31,6 +31,8 @@
   const triggerName  = document.getElementById('trigger-name');
   const slider       = document.getElementById('intensity-slider');
   const intensityVal = document.getElementById('intensity-val');
+  const intensityWrap = document.getElementById('intensity-wrap');
+  const mainBar      = document.getElementById('main-bar');
   const compareBtn   = document.getElementById('btn-compare');
   const splitBtn     = document.getElementById('btn-split');
   const splitDivider = document.getElementById('split-divider');
@@ -562,6 +564,12 @@
     // Mark the active card
     condCards.forEach(c => c.classList.toggle('active', c.dataset.mode === cond.name));
 
+    // Intensity has no effect on normal vision, so hide the slider there and
+    // let the trigger / action buttons spread across the bar instead.
+    const isNormal = cond.index === 0;
+    intensityWrap.classList.toggle('hidden', isNormal);
+    mainBar.classList.toggle('no-intensity', isNormal);
+
     // If switching to a simulation while intensity is zero, auto-restore to 100%
     if (currentMode !== 0 && intensity === 0) {
       slider.value = 100;
@@ -743,6 +751,7 @@
   // ── Boot ──────────────────────────────────────────────────────────────────
 
   positionSplitHandle();
+  activateMode('normal');   // sync trigger, panels and intensity visibility
   await startCamera();
 
 })();
